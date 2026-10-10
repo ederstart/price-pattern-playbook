@@ -35,7 +35,9 @@ const SPEEDS = [1, 2, 4, 8, 16];
 function Index() {
   const [mode, setMode] = useState<"both" | SetupType>("both");
   const [seed, setSeed] = useState(0);
-  const data = useMemo(() => generate(mode), [mode, seed]);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const data = useMemo(() => (mounted ? generate(mode) : { candles: [], anns: [], setups: [] }), [mode, seed, mounted]);
   const [visible, setVisible] = useState(60);
   const [playing, setPlaying] = useState(true);
   const [speed, setSpeed] = useState(2);
@@ -51,7 +53,7 @@ function Index() {
 
   const current = [...data.setups].reverse().find((s) => s.start < visible);
   const done = data.setups.filter((s) => s.end < visible).length;
-  const finished = visible >= data.candles.length;
+  const finished = data.candles.length > 0 && visible >= data.candles.length;
   let phase = "Aguardando formação…";
   if (current) {
     if (visible > current.end) phase = "Alvo atingido ✓";
