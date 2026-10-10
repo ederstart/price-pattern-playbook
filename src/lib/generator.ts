@@ -54,8 +54,8 @@ class Builder {
     const start = this.candles.length - n;
     let best = start;
     for (let k = start; k < this.candles.length; k++) {
-      const c = this.candles[k];
-      const b = this.candles[best];
+      const c = this.candles[k]!;
+      const b = this.candles[best]!;
       if (d === 1 ? c.h > b.h : c.l < b.l) best = k;
     }
     return best;
@@ -71,8 +71,8 @@ class Builder {
     const c3 = c2 + d * size * 0.2;
     this.candles.push({ o: c2, c: c3, h: Math.max(c2, c3) + tiny(0.3), l: Math.min(c2, c3) - tiny(0.3) });
     this.price = c3;
-    const a = this.candles[this.i - 2];
-    const b = this.candles[this.i];
+    const a = this.candles[this.i - 2]!;
+    const b = this.candles[this.i]!;
     const top = d === 1 ? b.l : a.l;
     const bottom = d === 1 ? a.h : b.h;
     return { top, bottom, idx: this.i - 1 };

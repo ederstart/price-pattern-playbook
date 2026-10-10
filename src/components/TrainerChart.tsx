@@ -113,7 +113,7 @@ export function TrainerChart({ candles, anns, visible, window: win }: Props) {
               ctx.fillText(`${a.label} ${a.y.toFixed(2)}`, x2 + 4 > plotW - 120 ? x2 - 130 : x2 + 4, y - 4);
             }
           }
-        } else {
+        } else if (a.kind === "text") {
           ctx.fillStyle = col.text;
           const w = ctx.measureText(a.label).width;
           const y = a.pos === "above" ? yOf(a.y) - 10 : yOf(a.y) + 18;
@@ -123,7 +123,7 @@ export function TrainerChart({ candles, anns, visible, window: win }: Props) {
       }
 
       // current price
-      const last = view[view.length - 1];
+      const last = view[view.length - 1]!;
       const ly = yOf(last.c);
       const up = last.c >= last.o;
       ctx.strokeStyle = up ? col.bull : col.bear;
