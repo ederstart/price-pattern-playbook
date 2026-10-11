@@ -8,3 +8,6 @@
 > Commits you push to the connected branch sync back to Lovable and show up in
 > the editor, so keep the branch in a working state.
 <!-- LOVABLE:END -->
+
+- Real XAUUSD candles come from the unofficial TradingView chart websocket in src/lib/tv.server.ts (fetch-upgrade on edge, undici WebSocket in dev); user chose it over official feeds.
+- Setup detection (CHoCH/BOS + FVG, entry 50%, stop beyond FVG, take at next pivot) lives in src/lib/detect.ts and is shared by nothing else; the simulator uses src/lib/generator.ts.
