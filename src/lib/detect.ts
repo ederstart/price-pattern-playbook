@@ -66,6 +66,12 @@ export function takePrice(entry: number, stop: number, dir: 1 | -1, liquidity: n
   return round(nearby[0] ?? entry + dir * 500 * POINT);
 }
 
+/** A touch or wick through the edge is allowed while price respects the zone and stop. */
+export function respectsFvg(bars: Candle[], top: number, bottom: number, stop: number, dir: 1 | -1) {
+  const far = dir === 1 ? bottom : top;
+  return bars.every(k => (k.c - far) * dir >= 0 && (dir === 1 ? k.l > stop : k.h < stop));
+}
+
 /** Track only the first retest. A later winning move cannot upgrade an earlier weak entry. */
 export function updateStrength(s: LiveSetup, k: Candle, i: number) {
   if (s.retestComplete) return;
@@ -82,7 +88,7 @@ export function updateStrength(s: LiveSetup, k: Candle, i: number) {
   if ((k.c - near) * s.dir >= 0) s.retestComplete = true;
 }
 
-/** Closed candles only. Processes pivots, breaks and outcomes in chronological order. */
+/** Processes every supplied candle, including the live candle, in chronological order. */
 export function detect(c: Candle[]) {
   const anns: Ann[] = [];
   const setups: LiveSetup[] = [];
@@ -100,6 +106,9 @@ export function detect(c: Candle[]) {
   let trendStart = 0;
   let cooldownUntil = -1;
   let id = 0;
+  // A BOS impulse may finish its three-candle FVG after the breakout candle.
+  type Impulse = { at: number; pivot: number; level: number; dir: 1 | -1; atr: number; emitted: Set<number> };
+  let impulses: Impulse[] = [];
 
   const cancel = (s: LiveSetup, i: number) => {
     s.status = "cancelada";
@@ -115,7 +124,7 @@ export function detect(c: Candle[]) {
       const touched = k.l <= s.entry && k.h >= s.entry;
       const far = s.dir === 1 ? s.fvgBottom : s.fvgTop;
       // OHLC cannot order intrabar touches: invalidate conservatively before activation.
-      if (hitStop || (k.c - far) * s.dir < 0 || (!touched && (k.c - s.breakLevel) * s.dir < 0)) {
+      if (hitStop || (k.c - far) * s.dir < 0) {
         cancel(s, i); return;
       }
       if (touched) {
@@ -124,7 +133,7 @@ export function detect(c: Candle[]) {
         // No same-bar take: price may have reached it before filling the entry.
         return;
       }
-      if (hitTake) cancel(s, i);
+      // Passing the target before entry does not invalidate a respected FVG.
     } else if (s.status === "ativa") {
       if (hitStop) { s.status = "stop"; s.closedAt = i; }
       else {
@@ -135,7 +144,6 @@ export function detect(c: Candle[]) {
   };
 
   for (let i = 0; i < c.length; i++) {
-    for (const s of setups) if ((s.status === "aguardando" || s.status === "ativa") && i > s.fvgAt) resolve(s, i);
     const p = i - PIVOT;
     if (p >= PIVOT) {
       let isH = true, isL = true;
@@ -192,27 +200,35 @@ export function detect(c: Candle[]) {
         }
         if (dir === 1) lowSweep = null; else highSweep = null;
       }
-      let fvg: { idx: number; top: number; bottom: number } | null = null;
-      for (let j = i; j >= Math.max(piv, 2) && j > i - 15; j--) {
-        const a0 = c[j - 2]!, a2 = c[j]!;
-        const top = dir === 1 ? a2.l : a0.l;
-        const bottom = dir === 1 ? a0.h : a2.h;
-        if (top - bottom <= a * 0.15) continue;
-        // Do not issue a fresh entry for an FVG already filled before this break.
+      // CHoCH is context only: await a continuation BOS in the new direction.
+      if (type === "bos") impulses.push({ at: i, pivot: piv, level, dir, atr: a, emitted: new Set() });
+    }
+    for (const s of setups) if ((s.status === "aguardando" || s.status === "ativa") && i > s.fvgAt) resolve(s, i);
+    impulses = impulses.filter(leg => i - leg.at <= 3 && leg.dir === trend && bosCount >= 1 && i > cooldownUntil);
+    for (const leg of impulses) {
+      const { dir } = leg;
+      const first = i === leg.at;
+      for (let j = i; j >= (first ? Math.max(leg.pivot, 2, i - 14) : i); j--) {
+        if (j < 2 || leg.emitted.has(j)) continue;
+        const top = dir === 1 ? c[j]!.l : c[j - 2]!.l;
+        const bottom = dir === 1 ? c[j - 2]!.h : c[j]!.h;
+        if (top - bottom <= leg.atr * 0.15) continue;
+        const far = dir === 1 ? bottom : top;
+        const stop = round(far - dir * leg.atr * 0.2);
+        // Prior touches are valid; only loss of the zone/stop invalidates reuse.
+        if (!respectsFvg(c.slice(j + 1, i + 1), top, bottom, stop, dir)) continue;
+        // One open position/order per zone; another BOS can reuse it after closure.
+        if (setups.some(s => s.dir === dir && s.fvgStart === j - 2 && (s.status === "aguardando" || s.status === "ativa"))) continue;
         const entry = fvgEntry(top, bottom, dir);
-        if (c.slice(j + 1, i + 1).some(bar => dir === 1 ? bar.l <= entry : bar.h >= entry)) continue;
-        fvg = { idx: j - 2, top, bottom }; break;
+        const pool = (dir === 1 ? highs : lows).filter(x => !(dir === 1 ? takenHighs : takenLows).has(x))
+          .map(x => dir === 1 ? c[x]!.h : c[x]!.l);
+        const take = takePrice(entry, stop, dir, pool);
+        setups.push({ id: id++, type: "bos", dir, breakAt: leg.at, breakLevel: leg.level,
+          fvgAt: i, fvgStart: j - 2, fvgTop: top, fvgBottom: bottom, entry, stop, take,
+          status: "aguardando", strength: "pendente", maxDepth: 0, retestComplete: false });
+        leg.emitted.add(j);
+        break;
       }
-      if (!fvg) continue;
-      const entry = fvgEntry(fvg.top, fvg.bottom, dir);
-      const far = dir === 1 ? fvg.bottom : fvg.top;
-      const stop = round(far - dir * a * 0.2);
-      const pool = (dir === 1 ? highs : lows).filter(x => !(dir === 1 ? takenHighs : takenLows).has(x))
-        .map(x => dir === 1 ? c[x]!.h : c[x]!.l);
-      const take = takePrice(entry, stop, dir, pool);
-      setups.push({ id: id++, type, dir, breakAt: i, breakLevel: level, fvgAt: i, fvgStart: fvg.idx,
-        fvgTop: fvg.top, fvgBottom: fvg.bottom, entry, stop, take, status: "aguardando",
-        strength: "pendente", maxDepth: 0, retestComplete: false });
     }
   }
   const last = c.length - 1;

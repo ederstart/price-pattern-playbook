@@ -53,7 +53,7 @@ function Live() {
     setRaw([]);
     setFollow(true);
     const load = async () => {
-      const r = await getCandles({ data: { tf, count: tf === "1" ? 4000 : 1500 } }).catch((e) => ({ ok: false as const, error: String(e), candles: [] }));
+      const r = await getCandles({ data: { tf, count: tf === "1" ? 6000 : 1500 } }).catch((e) => ({ ok: false as const, error: String(e), candles: [] }));
       if (!alive || tfRef.current !== tf) return;
       setLoading(false);
       if (r.ok && r.candles.length) { setRaw(r.candles); setError(null); }
@@ -66,12 +66,8 @@ function Live() {
 
   const candles = useMemo(() => raw.map(({ o, h, l, c }) => ({ o, h, l, c })), [raw]);
   const times = useMemo(() => raw.map((c) => c.t), [raw]);
-  // The last provider candle can still be forming; never confirm breaks on it.
-  const closedCandles = useMemo(() => {
-    const seconds = tf === "1D" ? 86400 : Number(tf) * 60;
-    return raw.filter(bar => bar.t + seconds <= Date.now() / 1000);
-  }, [raw, tf]);
-  const { anns, setups, cooldownRemaining } = useMemo(() => detect(closedCandles), [closedCandles]);
+  // Include the provider's latest (forming) candle for intrabar entries.
+  const { anns, setups, cooldownRemaining } = useMemo(() => detect(candles), [candles]);
   const end = follow ? candles.length + 5 : view.end;
 
   const jump = (s: LiveSetup) => {
@@ -170,7 +166,7 @@ function Live() {
               {!recent.length && <li className="py-2 text-muted-foreground">Nenhum setup ainda.</li>}
             </ul>
           </div>
-          <p className="text-xs text-muted-foreground">Dados não oficiais do TradingView. Marcações automáticas podem errar — use para estudo.</p>
+          <p className="text-xs text-muted-foreground">Sinais na vela aberta são atualizados a cada consulta e podem mudar até o fechamento. Dados não oficiais do TradingView. Marcações automáticas podem errar — use para estudo.</p>
         </aside>
       </div>
     </main>

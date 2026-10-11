@@ -4,7 +4,7 @@ import { z } from "zod";
 const TFS = ["1", "5", "15", "30", "60", "240", "1D"] as const;
 
 export const getCandles = createServerFn({ method: "GET" })
-  .inputValidator((d) => z.object({ tf: z.enum(TFS), count: z.number().int().min(50).max(4000) }).parse(d))
+  .inputValidator((d) => z.object({ tf: z.enum(TFS), count: z.number().int().min(50).max(6000) }).parse(d))
   .handler(async ({ data }) => {
     const { fetchCandles } = await import("./tv.server");
     try {

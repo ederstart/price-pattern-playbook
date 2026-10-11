@@ -59,7 +59,13 @@ export async function fetchCandles(symbol: string, tf: string, count: number): P
         if (msg.m === "timescale_update" || msg.m === "du") {
           const s = msg.p?.[1]?.sds_1?.s;
           if (Array.isArray(s)) {
-            out = s.map((b: any) => ({ t: b.v[0], o: b.v[1], h: b.v[2], l: b.v[3], c: b.v[4] }));
+            // History can arrive in multiple chunks; updates replace only matching timestamps.
+            const merged = new Map(out.map(candle => [candle.t, candle]));
+            for (const b of s) {
+              const candle: TvCandle = { t: b.v[0], o: b.v[1], h: b.v[2], l: b.v[3], c: b.v[4] };
+              merged.set(candle.t, candle);
+            }
+            out = [...merged.values()].sort((a, b) => a.t - b.t).slice(-count);
           }
         }
         if (msg.m === "series_completed") { clearTimeout(timer); sock.close(); resolve(out); }
@@ -74,3 +80,4 @@ export async function fetchCandles(symbol: string, tf: string, count: number): P
     sock.send(frame("create_series", [cs, "sds_1", "s1", "sds_sym_1", tf, count, ""]));
   });
 }
+

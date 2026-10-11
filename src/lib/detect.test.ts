@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detect, fvgEntry, isDisplacement, priorAtr, takePrice, updateStrength, type LiveSetup } from "./detect";
+import { detect, fvgEntry, isDisplacement, priorAtr, respectsFvg, takePrice, updateStrength, type LiveSetup } from "./detect";
 import type { Candle } from "./generator";
 
 const prices = [...Array<number>(14).fill(100), 102, 104, 103, 102, 101, 102, 105, 109, 107, 105, 103, 104, 108, 113, 111, 109, 107, 108, 112, 117, 115, 113, 111, 112, 113, 112, 111, 112, 110, 109, 106, 102, 98];
@@ -36,17 +36,21 @@ describe("confirmed structure and displacement", () => {
     expect(result.setups).toHaveLength(0);
   });
   it.each([false, true])("confirms BOS before CHoCH, with real swept-pivot annotations (mirror=%s)", reversed => {
-    const c = candles(prices).map(k => reversed ? mirror(k) : k);
+    const base = candles(prices);
+    base[28] = { o: 113, c: 111, h: 113.1, l: 106 };
+    base[34] = { o: 117, c: 115, h: 117.1, l: 110 };
+    const c = base.map(k => reversed ? mirror(k) : k);
     const result = detect(c);
     const breaks = result.anns.filter(a => a.kind === "line" && ["BOS", "CHoCH"].includes(a.label));
-    expect(breaks.map(a => a.kind === "line" ? a.label : "")).toEqual(["BOS", "CHoCH"]);
+    expect(breaks.map(a => a.kind === "line" ? a.label : "")).toEqual(["BOS", "BOS", "CHoCH"]);
     const liquidity = result.anns.find(a => a.kind === "text" && a.label === "LIQUIDEZ");
-    expect(liquidity).toMatchObject({ x: 27, show: 42 });
+    expect(liquidity).toMatchObject({ x: 27, show: 45 });
     expect(result.anns).toContainEqual(expect.objectContaining({ kind: "line", x1: 27, x2: 33, label: "" }));
     expect(result.anns).toContainEqual(expect.objectContaining({ label: "LIQUIDEZ VARRIDA / REVERSÃO", x: 33 }));
   });
   it("cancellation silences the next ten bars, including the boundary", () => {
     const c = candles(prices);
+    c[28] = { o: 113, c: 103, h: 113.1, l: 102 };
     expect(detect(c.slice(0, 29)).setups[0]).toMatchObject({ status: "cancelada", closedAt: 28 });
     for (let i = 28; i <= 38; i++) {
       const result = detect(c.slice(0, i + 1));
@@ -54,7 +58,7 @@ describe("confirmed structure and displacement", () => {
       expect(result.setups.filter(s => s.breakAt > 28 && s.breakAt <= 38)).toHaveLength(0);
       expect(result.anns.filter(a => a.kind === "line" && ["BOS", "CHoCH"].includes(a.label) && a.show > 28 && a.show <= 38)).toHaveLength(0);
     }
-    expect(detect(c).setups.some(s => s.breakAt > 38)).toBe(true);
+    expect(detect(c).cooldownRemaining).toBe(0);
   });
   it("violating a pending stop cancels before activation and starts cooldown", () => {
     const c = candles(prices.slice(0, 28));
@@ -71,6 +75,35 @@ describe("confirmed structure and displacement", () => {
     c.push({ o: 108, c: 112, h: 112.1, l: 107.9 });
     expect(detect(mapped()).setups[0]).toMatchObject({ status: "take", closedAt: 29 });
   });
+  it("keeps BOS orders valid after a target touch or normal pullback above the zone", () => {
+    const c = candles(prices.slice(0, 30));
+    const result = detect(c);
+    expect(result.setups[0]?.status).toBe("aguardando");
+    expect(result.cooldownRemaining).toBe(0);
+  });
+  it("detects a BOS on the latest candle and an additional FVG on the next candle", () => {
+    expect(detect(candles(prices.slice(0, 28))).setups[0]).toMatchObject({ breakAt: 27, fvgAt: 27 });
+    const result = detect(candles(prices.slice(0, 29)));
+    expect(result.setups).toContainEqual(expect.objectContaining({ breakAt: 27, fvgAt: 28, fvgStart: 26 }));
+  });
+  it("permits subsequent trend BOS signals without needing another CHoCH", () => {
+    const result = detect(candles(prices.slice(0, 34)));
+    expect(result.setups.some(s => s.breakAt === 27)).toBe(true);
+    expect(result.setups.some(s => s.breakAt === 33)).toBe(true);
+    expect(result.setups.every(s => s.type === "bos" && s.dir === 1)).toBe(true);
+  });
+  it("does not enter against the established direction on CHoCH alone", () => {
+    const c = candles(prices);
+    c[28] = { o: 113, c: 111, h: 113.1, l: 106 };
+    c[34] = { o: 117, c: 115, h: 117.1, l: 110 };
+    const result = detect(c);
+    expect(result.anns.some(a => a.kind === "line" && a.label === "CHoCH")).toBe(true);
+    expect(result.setups.some(s => s.dir === -1)).toBe(false);
+  });
+  it("cancels an old-direction pending entry before a contrary break can activate it", () => {
+    const result = detect(candles(prices));
+    expect(result.setups.filter(s => s.breakAt === 33 && s.fvgAt === 33)[0]).toMatchObject({ status: "cancelada", closedAt: 42 });
+  });
   it("does not draw a later CHoCH or sweep before confirmation", () => {
     const early = detect(candles(prices.slice(0, 42)));
     expect(early.anns.some(a => a.kind === "text" && a.label.includes("LIQUIDEZ"))).toBe(false);
@@ -79,6 +112,12 @@ describe("confirmed structure and displacement", () => {
 });
 
 describe("FVG entry, rejection and target", () => {
+  it.each([1, -1] as const)("allows touched FVGs that retain context in direction %s", dir => {
+    const bar = (k: Candle) => dir === 1 ? k : mirror(k);
+    expect(respectsFvg([bar({ o: 111, c: 108, h: 112, l: 104 })], 110, 100, dir === 1 ? 99 : 111, dir)).toBe(true);
+    expect(respectsFvg([bar({ o: 108, c: 99.5, h: 109, l: 99.2 })], 110, 100, dir === 1 ? 99 : 111, dir)).toBe(false);
+    expect(respectsFvg([bar({ o: 108, c: 109, h: 110, l: 98 })], 110, 100, dir === 1 ? 99 : 111, dir)).toBe(false);
+  });
   it("enters at 38.2% from the correct side", () => {
     expect(fvgEntry(110, 100, 1)).toBe(106.18);
     expect(fvgEntry(110, 100, -1)).toBe(103.82);
