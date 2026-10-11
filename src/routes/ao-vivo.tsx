@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getCandles } from "@/lib/market.functions";
-import { detect, DETECTOR_VERSION, STRENGTH_LABELS, type LiveSetup } from "@/lib/detect";
+import { CONTRACT_OUNCES_PER_LOT, DEFAULT_FVG_ENTRY_DEPTH, DEFAULT_LOT_SIZE, detect, DETECTOR_VERSION, RISK_REWARD_RATIO, STRENGTH_LABELS, type LiveSetup } from "@/lib/detect";
 import { TrainerChart } from "@/components/TrainerChart";
 import type { TvCandle } from "@/lib/tv.server";
 
@@ -28,8 +28,15 @@ const TFS = [
 ] as const;
 type Tf = (typeof TFS)[number]["v"];
 
+const formatUsd = (amount: number) => new Intl.NumberFormat("pt-BR", {
+  style: "currency",
+  currency: "USD",
+  maximumFractionDigits: 2,
+}).format(amount);
+
 const STATUS: Record<LiveSetup["status"], { label: string; cls: string }> = {
   aguardando: { label: "Aguardando entrada", cls: "text-muted-foreground" },
+  confirmada: { label: "Rejeição confirmada · aguardando próxima vela", cls: "text-primary" },
   ativa: { label: "Em operação", cls: "text-primary" },
   take: { label: "Take ✓", cls: "text-bull" },
   stop: { label: "Stop ✗", cls: "text-bear" },
@@ -44,6 +51,7 @@ function Live() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [follow, setFollow] = useState(true);
+  const [lotSize, setLotSize] = useState(DEFAULT_LOT_SIZE);
   const [view, setView] = useState({ end: 0, win: 120 });
   const tfRef = useRef(tf);
   tfRef.current = tf;
@@ -67,8 +75,13 @@ function Live() {
 
   const candles = useMemo(() => raw.map(({ o, h, l, c }) => ({ o, h, l, c })), [raw]);
   const times = useMemo(() => raw.map((c) => c.t), [raw]);
-  // Include the provider's latest (forming) candle for intrabar entries.
-  const { anns, setups, cooldownRemaining } = useMemo(() => detect(candles), [candles]);
+  // The provider's last candle is still forming; signals and retests require a close.
+  const confirmedCandles = useMemo(() => candles.slice(0, -1), [candles]);
+  const confirmedTimes = useMemo(() => times.slice(0, -1), [times]);
+  const { anns, setups, cooldownRemaining } = useMemo(
+    () => detect(confirmedCandles, { lotSize, ...(tf === "1" ? { times: confirmedTimes } : {}) }),
+    [confirmedCandles, confirmedTimes, lotSize, tf],
+  );
   const end = follow ? candles.length + 5 : view.end;
 
   const jump = (s: LiveSetup) => {
@@ -79,9 +92,8 @@ function Live() {
   const recent = [...setups].reverse().slice(0, 12);
   const closed = setups.filter((s) => s.status === "take" || s.status === "stop");
   const uncertain = setups.filter(s => s.status === "indeterminada").length;
-  const canceled = setups.filter(s => s.status === "cancelada").length;
   const wins = closed.filter((s) => s.status === "take").length;
-  const open = [...setups].reverse().find((s) => s.status === "aguardando" || s.status === "ativa");
+  const open = [...setups].reverse().find((s) => s.status === "aguardando" || s.status === "confirmada" || s.status === "ativa");
   const last = raw[raw.length - 1];
   const stale = last ? Date.now() / 1000 - last.t > 60 * 30 && tf !== "1D" : false;
 
@@ -131,6 +143,21 @@ function Live() {
         </div>
 
         <aside className="space-y-3">
+          <div className="panel flex items-center justify-between gap-3">
+            <label htmlFor="lot-size" className="text-sm font-medium">Tamanho do lote</label>
+            <input
+              id="lot-size"
+              type="number"
+              min="0.01"
+              step="0.01"
+              value={lotSize}
+              onChange={(event) => {
+                const value = event.currentTarget.valueAsNumber;
+                if (Number.isFinite(value) && value > 0) setLotSize(value);
+              }}
+              className="w-24 rounded border border-border bg-background px-2 py-1 text-right font-mono"
+            />
+          </div>
           <div className="panel">
             <div className="text-xs uppercase tracking-widest text-muted-foreground">Setup atual</div>
             {open ? (
@@ -139,12 +166,15 @@ function Live() {
                   {open.dir === 1 ? "Compra" : "Venda"} · {open.type === "choch" ? "CHoCH" : "BOS"} + FVG
                 </div>
                 <div className={`text-sm ${STATUS[open.status].cls}`}>{STATUS[open.status].label}</div>
-                <div className="text-xs mt-1 text-muted-foreground">{STRENGTH_LABELS[open.strength]} · entrada 38,2%</div>
+                <div className="text-xs mt-1 text-muted-foreground">{STRENGTH_LABELS[open.strength]} · entrada {Math.round(DEFAULT_FVG_ENTRY_DEPTH * 100)}% da borda próxima do FVG · execução após rejeição</div>
                 <div className="grid grid-cols-3 gap-2 text-center mt-3">
                   <div className="stat stat-entry"><span>Entrada</span><b>{open.entry.toFixed(2)}</b></div>
-                  <div className="stat stat-stop"><span>Stop</span><b>{open.stop.toFixed(2)}</b></div>
-                  <div className="stat stat-take"><span>Take</span><b>{open.take.toFixed(2)}</b></div>
+                  <div className="stat stat-stop"><span>Stop · −{formatUsd(Math.abs(open.entry - open.stop) * CONTRACT_OUNCES_PER_LOT * lotSize)}</span><b>{open.stop.toFixed(2)}</b></div>
+                  <div className="stat stat-take"><span>Take · +{formatUsd(Math.abs(open.take - open.entry) * CONTRACT_OUNCES_PER_LOT * lotSize)}</span><b>{open.take.toFixed(2)}</b></div>
                 </div>
+                <p className="mt-2 text-[10px] text-muted-foreground">
+                  Alvo de {RISK_REWARD_RATIO}R · estimativa baseada em {CONTRACT_OUNCES_PER_LOT} oz/lote.
+                </p>
               </>
             ) : (
               <div className="mt-1 text-sm text-muted-foreground">Nenhum setup aberto — aguardando quebra de estrutura com FVG.</div>
@@ -156,8 +186,8 @@ function Live() {
               <span>Histórico no gráfico</span>
               <span>{wins}/{closed.length} takes</span>
             </div>
-            <p className="text-xs text-muted-foreground mt-2">{DETECTOR_VERSION} · {raw.length.toLocaleString("pt-BR")} velas carregadas{cooldownRemaining > 0 ? ` · Bloqueio: ${cooldownRemaining} velas restantes` : ""}</p>
-            <p className="text-xs text-muted-foreground mt-1">{canceled} canceladas antes da entrada · {uncertain} indeterminadas (fora da estatística)</p>
+            <p className="text-xs text-muted-foreground mt-2">{DETECTOR_VERSION} · {raw.length.toLocaleString("pt-BR")} velas carregadas · lote {lotSize.toLocaleString("pt-BR")}{cooldownRemaining > 0 ? ` · Bloqueio: ${cooldownRemaining} velas restantes` : ""}</p>
+            {uncertain > 0 && <p className="text-xs text-muted-foreground mt-1">{uncertain} entradas indeterminadas (fora da estatística)</p>}
             <ul className="mt-2 divide-y divide-border text-sm">
               {recent.map((s) => (
                 <li key={s.id}>
@@ -170,10 +200,9 @@ function Live() {
               {!recent.length && <li className="py-2 text-muted-foreground">Nenhum setup ainda.</li>}
             </ul>
           </div>
-          <p className="text-xs text-muted-foreground">Sinais na vela aberta são atualizados a cada consulta e podem mudar até o fechamento. Dados não oficiais do TradingView. Marcações automáticas podem errar — use para estudo.</p>
+          <p className="text-xs text-muted-foreground">Sinais e retestes só são confirmados em velas fechadas. Dados não oficiais do TradingView; as marcações automáticas podem errar — use para estudo.</p>
         </aside>
       </div>
     </main>
   );
 }
-

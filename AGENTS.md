@@ -10,5 +10,4 @@
 <!-- LOVABLE:END -->
 
 - Real XAUUSD candles come from the unofficial TradingView chart websocket in src/lib/tv.server.ts (fetch-upgrade on edge, undici WebSocket in dev); user chose it over official feeds.
-- Setup detection (CHoCH context / BOS entries + FVG, entry 38.2%, stop beyond impulse candle, take 5.00 or untouched liquidity within 5.00 and at least 1.5R) lives in src/lib/detect.ts and is shared by nothing else; the simulator uses src/lib/generator.ts.
-
+- Live setup detection (BOS continuation and swept-liquidity CHoCH reversals + FVG) lives in src/lib/detect.ts; the simulator uses src/lib/generator.ts. Live entries use 15% penetration from the near FVG edge, require a closed, strong rejection candle and a 5m structure/BOS bias on 1m charts (no moving averages), with a dynamic 2R target and structural stop risk capped at $134 per trade, scaled to the selected lot using the 100 oz per lot assumption. There is no minimum monetary stop.

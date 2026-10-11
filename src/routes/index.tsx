@@ -19,7 +19,7 @@ const INFO = {
   choch: {
     title: "Reversão — CHoCH + FVG",
     ctx: "Preço vem em tendência e faz um CHoCH. O FVG criado no impulso de reversão vira a zona de entrada.",
-    cond: ["CHoCH confirmado na estrutura", "FVG formado no impulso do CHoCH", "Retorno do preço ao FVG", "Confluência: sessão + liquidez varrida"],
+    cond: ["CHoCH confirmado na estrutura", "Varredura de liquidez confirmada", "FVG formado no impulso do CHoCH", "Retorno do preço ao FVG"],
     alvo: "Próx. estrutura",
   },
   bos: {
