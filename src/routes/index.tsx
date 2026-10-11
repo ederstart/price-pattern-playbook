@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { generate, type SetupType } from "@/lib/generator";
 import { TrainerChart } from "@/components/TrainerChart";
@@ -70,7 +70,10 @@ function Index() {
           <h1 className="font-display text-2xl tracking-tight">
             <span className="text-primary">XAUUSD</span> Screen Time
           </h1>
-          <p className="text-sm text-muted-foreground">Gráfico simulado · dados fictícios · treino de leitura</p>
+          <nav className="flex gap-3 text-sm">
+            <span className="text-primary">Treino (simulado)</span>
+            <Link to="/ao-vivo" className="text-muted-foreground hover:text-foreground">Ao vivo (real)</Link>
+          </nav>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {(["both", "choch", "bos"] as const).map((m) => (
