@@ -102,8 +102,6 @@ export function detect(c: Candle[]) {
         if (top - bottom > a * 0.15) { fvg = { idx: j - 1, top, bottom }; break; }
       }
       if (!fvg) continue;
-      // replace older pending same-direction setup
-      for (const s of setups) if (s.status === "aguardando" && s.dir === dir) { s.status = "cancelada"; s.closedAt = i; }
 
       const entry = (fvg.top + fvg.bottom) / 2;
       const far = dir === 1 ? fvg.bottom : fvg.top;
@@ -121,8 +119,9 @@ export function detect(c: Candle[]) {
   for (const s of setups) {
     const x1 = s.fvgAt - 2;
     const x2 = s.closedAt ?? last + 3;
+    anns.push({ kind: "box", x1, x2, top: s.fvgTop, bottom: s.fvgBottom, show: s.fvgAt });
+    if (s.status === "cancelada" || s.status === "expirada") continue;
     anns.push(
-      { kind: "box", x1, x2, top: s.fvgTop, bottom: s.fvgBottom, show: s.fvgAt },
       { kind: "line", x1: s.fvgAt, x2, y: s.entry, label: s.dir === 1 ? "ENTRADA COMPRA" : "ENTRADA VENDA", tone: "entry", show: s.fvgAt },
       { kind: "line", x1: s.fvgAt, x2, y: s.stop, label: "STOP", tone: "stop", show: s.fvgAt },
       { kind: "line", x1: s.fvgAt, x2, y: s.take, label: "TAKE", tone: "take", show: s.fvgAt },
