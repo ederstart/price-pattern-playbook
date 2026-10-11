@@ -1,14 +1,63 @@
 import { useEffect, useRef } from "react";
 import type { Ann, Candle } from "@/lib/generator";
 
-type Props = { candles: Candle[]; anns: Ann[]; visible: number; window: number };
+type Props = {
+  candles: Candle[];
+  anns: Ann[];
+  visible: number;
+  window: number;
+  times?: number[];
+  tf?: string;
+  onView?: (end: number, window: number) => void;
+};
 
 function cssVar(el: Element, name: string) {
   return getComputedStyle(el).getPropertyValue(name).trim();
 }
 
-export function TrainerChart({ candles, anns, visible, window: win }: Props) {
+export function TrainerChart({ candles, anns, visible, window: win, times, tf, onView }: Props) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const live = useRef({ visible, win, onView, len: candles.length });
+  live.current = { visible, win, onView, len: candles.length };
+
+  useEffect(() => {
+    const cv = ref.current;
+    if (!cv) return;
+    let drag: { x: number; end: number } | null = null;
+    const step = () => (cv.clientWidth - 70) / live.current.win;
+    const clampEnd = (e: number) => Math.max(10, Math.min(live.current.len + 20, e));
+    const down = (e: PointerEvent) => {
+      if (!live.current.onView) return;
+      drag = { x: e.clientX, end: live.current.visible };
+      cv.setPointerCapture(e.pointerId);
+    };
+    const move = (e: PointerEvent) => {
+      if (!drag) return;
+      const shift = Math.round((e.clientX - drag.x) / step());
+      live.current.onView?.(clampEnd(drag.end - shift), live.current.win);
+    };
+    const up = () => { drag = null; };
+    const wheel = (e: WheelEvent) => {
+      if (!live.current.onView) return;
+      e.preventDefault();
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+        live.current.onView(clampEnd(live.current.visible + Math.round(e.deltaX / step())), live.current.win);
+        return;
+      }
+      const w = Math.round(Math.max(20, Math.min(600, live.current.win * (e.deltaY > 0 ? 1.15 : 0.87))));
+      live.current.onView(live.current.visible, w);
+    };
+    cv.addEventListener("pointerdown", down);
+    cv.addEventListener("pointermove", move);
+    cv.addEventListener("pointerup", up);
+    cv.addEventListener("wheel", wheel, { passive: false });
+    return () => {
+      cv.removeEventListener("pointerdown", down);
+      cv.removeEventListener("pointermove", move);
+      cv.removeEventListener("pointerup", up);
+      cv.removeEventListener("wheel", wheel);
+    };
+  }, []);
 
   useEffect(() => {
     const cv = ref.current;
@@ -16,9 +65,10 @@ export function TrainerChart({ candles, anns, visible, window: win }: Props) {
     const draw = () => {
       const dpr = globalThis.devicePixelRatio || 1;
       const W = cv.clientWidth;
-      const H = cv.clientHeight;
+      const FH = cv.clientHeight;
+      const H = FH - (times ? 22 : 0);
       cv.width = W * dpr;
-      cv.height = H * dpr;
+      cv.height = FH * dpr;
       const ctx = cv.getContext("2d")!;
       ctx.scale(dpr, dpr);
       const col = {
@@ -34,13 +84,13 @@ export function TrainerChart({ candles, anns, visible, window: win }: Props) {
         take: cssVar(cv, "--take"),
       };
       ctx.fillStyle = col.bg;
-      ctx.fillRect(0, 0, W, H);
+      ctx.fillRect(0, 0, W, FH);
 
       const axisW = 70;
       const plotW = W - axisW;
       const end = visible;
       const start = Math.max(0, end - win);
-      const view = candles.slice(start, end);
+      const view = candles.slice(start, Math.min(end, candles.length));
       if (!view.length) return;
       const step = plotW / win;
       const xOf = (i: number) => (i - start) * step + step / 2;
@@ -65,6 +115,23 @@ export function TrainerChart({ candles, anns, visible, window: win }: Props) {
         const y = Math.round(yOf(p)) + 0.5;
         ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(plotW, y); ctx.stroke();
         ctx.fillText(p.toFixed(2), plotW + 8, y + 4);
+      }
+
+      // time axis
+      if (times) {
+        ctx.fillStyle = col.muted;
+        const every = Math.max(1, Math.round(win / 8));
+        for (let i = Math.ceil(start / every) * every; i < Math.min(end, candles.length); i += every) {
+          const t = times[i];
+          if (t === undefined) continue;
+          const d = new Date(t * 1000);
+          const pad2 = (n: number) => String(n).padStart(2, "0");
+          const lab = tf === "1D" ? `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}` : `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+          const x = xOf(i);
+          ctx.fillText(lab, x - ctx.measureText(lab).width / 2, FH - 6);
+          ctx.strokeStyle = col.grid;
+          ctx.beginPath(); ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, H); ctx.stroke();
+        }
       }
 
       // boxes
@@ -140,7 +207,7 @@ export function TrainerChart({ candles, anns, visible, window: win }: Props) {
     const ro = new ResizeObserver(draw);
     ro.observe(cv);
     return () => ro.disconnect();
-  }, [candles, anns, visible, win]);
+  }, [candles, anns, visible, win, times, tf]);
 
-  return <canvas ref={ref} className="h-full w-full block" />;
+  return <canvas ref={ref} className="h-full w-full block touch-none cursor-crosshair" />;
 }
