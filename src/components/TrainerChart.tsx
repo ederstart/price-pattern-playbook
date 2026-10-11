@@ -177,7 +177,12 @@ export function TrainerChart({ candles, anns, visible, window: win, times, tf, o
               const w = ctx.measureText(a.label).width;
               ctx.fillText(a.label, (x1 + x2) / 2 - w / 2, y - 4);
             } else {
-              ctx.fillText(`${a.label} ${a.y.toFixed(2)}`, x2 + 4 > plotW - 120 ? x2 - 130 : x2 + 4, y - 4);
+              const label = `${a.label} ${a.y.toFixed(2)}`;
+              const amount = a.amount === undefined ? "" : `${a.amount >= 0 ? "+" : "−"}${new Intl.NumberFormat("pt-BR", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(Math.abs(a.amount))}`;
+              const textWidth = Math.max(ctx.measureText(label).width, ctx.measureText(amount).width);
+              const x = x2 + 4 + textWidth > plotW ? Math.max(4, plotW - textWidth - 4) : x2 + 4;
+              ctx.fillText(label, x, y - (amount ? 7 : 4));
+              if (amount) ctx.fillText(amount, x, y + 6);
             }
           }
         } else if (a.kind === "text") {

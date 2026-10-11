@@ -210,11 +210,14 @@ describe("FVG entry, rejection and target", () => {
   });
   it("caps monetary risk and skips a too-wide structural stop", () => {
     const c = candles(prices.slice(0, 28));
-    const trade = detect(c, { lotSize: 0.5, entryDepth: 0.5 }).setups[0]!;
+    const result = detect(c, { lotSize: 0.5, entryDepth: 0.5 });
+    const trade = result.setups[0]!;
     const riskUsd = Math.abs(trade.entry - trade.stop) * 100 * 0.5;
     const targetUsd = Math.abs(trade.take - trade.entry) * 100 * 0.5;
     expect(riskUsd).toBeLessThanOrEqual(134);
     expect(targetUsd).toBeCloseTo(riskUsd * RISK_REWARD_RATIO, 0);
+    expect(result.anns.find(a => a.kind === "line" && a.tone === "stop")).toMatchObject({ amount: -riskUsd });
+    expect(result.anns.find(a => a.kind === "line" && a.tone === "take")).toMatchObject({ amount: targetUsd });
     expect(detect(c, { lotSize: 1 }).setups).toHaveLength(0);
   });
   it("records why BOS FVG candidates are skipped when diagnostics are requested", () => {

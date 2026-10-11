@@ -169,8 +169,8 @@ function Live() {
                 <div className="text-xs mt-1 text-muted-foreground">{STRENGTH_LABELS[open.strength]} · entrada {Math.round(DEFAULT_FVG_ENTRY_DEPTH * 100)}% da borda próxima do FVG · execução após rejeição</div>
                 <div className="grid grid-cols-3 gap-2 text-center mt-3">
                   <div className="stat stat-entry"><span>Entrada</span><b>{open.entry.toFixed(2)}</b></div>
-                  <div className="stat stat-stop"><span>Stop · −{formatUsd(Math.abs(open.entry - open.stop) * CONTRACT_OUNCES_PER_LOT * lotSize)}</span><b>{open.stop.toFixed(2)}</b></div>
-                  <div className="stat stat-take"><span>Take · +{formatUsd(Math.abs(open.take - open.entry) * CONTRACT_OUNCES_PER_LOT * lotSize)}</span><b>{open.take.toFixed(2)}</b></div>
+                  <div className="stat stat-stop"><span>Perda no stop · −{formatUsd(Math.abs(open.entry - open.stop) * CONTRACT_OUNCES_PER_LOT * lotSize)}</span><b>{open.stop.toFixed(2)}</b></div>
+                  <div className="stat stat-take"><span>Ganho no take · +{formatUsd(Math.abs(open.take - open.entry) * CONTRACT_OUNCES_PER_LOT * lotSize)}</span><b>{open.take.toFixed(2)}</b></div>
                 </div>
                 <p className="mt-2 text-[10px] text-muted-foreground">
                   Alvo de {RISK_REWARD_RATIO}R · estimativa baseada em {CONTRACT_OUNCES_PER_LOT} oz/lote.
@@ -193,14 +193,21 @@ function Live() {
                 <li key={s.id}>
                   <button onClick={() => jump(s)} className="w-full flex justify-between py-1.5 hover:text-primary text-left">
                     <span>{s.dir === 1 ? "▲" : "▼"} {s.type === "choch" ? "CHoCH" : "BOS"} · {times[s.fvgAt] ? new Date(times[s.fvgAt]! * 1000).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : ""}</span>
-                    <span className="text-right"><span className={STATUS[s.status].cls}>{STATUS[s.status].label}</span><small className="block text-muted-foreground" title={s.reason}>{s.reason ?? STRENGTH_LABELS[s.strength]}</small></span>
+                    <span className="text-right">
+                      <span className={STATUS[s.status].cls}>
+                        {STATUS[s.status].label}
+                        {s.status === "take" && ` · +${formatUsd(Math.abs(s.take - s.entry) * CONTRACT_OUNCES_PER_LOT * lotSize)}`}
+                        {s.status === "stop" && ` · −${formatUsd(Math.abs(s.entry - s.stop) * CONTRACT_OUNCES_PER_LOT * lotSize)}`}
+                      </span>
+                      <small className="block text-muted-foreground" title={s.reason}>{s.reason ?? STRENGTH_LABELS[s.strength]}</small>
+                    </span>
                   </button>
                 </li>
               ))}
               {!recent.length && <li className="py-2 text-muted-foreground">Nenhum setup ainda.</li>}
             </ul>
           </div>
-          <p className="text-xs text-muted-foreground">Sinais e retestes só são confirmados em velas fechadas. Dados não oficiais do TradingView; as marcações automáticas podem errar — use para estudo.</p>
+          <p className="text-xs text-muted-foreground">Valores em USD estimados pelo lote informado e hipótese de {CONTRACT_OUNCES_PER_LOT} oz/lote; o histórico usa o risco/alvo calculado no setup. Sinais e retestes só são confirmados em velas fechadas. Dados não oficiais do TradingView; use para estudo.</p>
         </aside>
       </div>
     </main>

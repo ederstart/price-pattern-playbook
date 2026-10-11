@@ -2,7 +2,7 @@ export type Candle = { o: number; h: number; l: number; c: number };
 export type SetupType = "choch" | "bos";
 
 export type Ann =
-  | { kind: "line"; x1: number; x2: number; y: number; label: string; tone: "neutral" | "entry" | "stop" | "take"; show: number }
+  | { kind: "line"; x1: number; x2: number; y: number; label: string; tone: "neutral" | "entry" | "stop" | "take"; show: number; amount?: number }
   | { kind: "box"; x1: number; x2: number; top: number; bottom: number; show: number }
   | { kind: "text"; x: number; y: number; label: string; pos: "above" | "below"; show: number };
 

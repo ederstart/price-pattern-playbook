@@ -481,8 +481,8 @@ export function detect(
     anns.push({ kind: "box", x1: s.fvgStart, x2, top: s.fvgTop, bottom: s.fvgBottom, show: s.fvgAt });
     anns.push(
       { kind: "line", x1: s.fvgAt, x2, y: s.entry, label: s.dir === 1 ? "ENTRADA COMPRA" : "ENTRADA VENDA", tone: "entry", show: s.fvgAt },
-      { kind: "line", x1: s.fvgAt, x2, y: s.stop, label: "STOP", tone: "stop", show: s.fvgAt },
-      { kind: "line", x1: s.fvgAt, x2, y: s.take, label: "TAKE", tone: "take", show: s.fvgAt },
+      { kind: "line", x1: s.fvgAt, x2, y: s.stop, label: "STOP · RISCO", tone: "stop", show: s.fvgAt, amount: -Math.abs(s.entry - s.stop) * CONTRACT_OUNCES_PER_LOT * lotSize },
+      { kind: "line", x1: s.fvgAt, x2, y: s.take, label: "TAKE · GANHO", tone: "take", show: s.fvgAt, amount: Math.abs(s.take - s.entry) * CONTRACT_OUNCES_PER_LOT * lotSize },
     );
     if (s.filledAt !== undefined) {
       anns.push({ kind: "text", x: s.filledAt, y: s.entry, label: s.dir === 1 ? "▲ ENTROU" : "▼ ENTROU", pos: s.dir === 1 ? "below" : "above", show: s.filledAt });

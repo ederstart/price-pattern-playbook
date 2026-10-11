@@ -71,6 +71,7 @@ npm run dev
 - A entrada padrão está a 15% de profundidade a partir da borda próxima do FVG (compra: borda superior; venda: borda inferior), usando a zona formada no impulso BOS/CHoCH. O teste histórico comparou profundidades de 15%, 25%, 30%, 40% e 50%; nessa amostra, 15% teve o maior número de trades e melhor resultado líquido entre as opções testadas. O reteste precisa fechar com rejeição a favor: pavio favorável de pelo menos 40% da amplitude e não menor que o corpo, pavio contrário de no máximo 40% e fechamento além do preço de entrada. A entrada só acontece na abertura da vela seguinte; a vela que ainda está formando não confirma retestes nem sinais.
 - O stop fica além da borda distante do FVG. Para XAUUSD, o dimensionamento assume 100 oz por lote: o stop estrutural é preservado, sem impor risco mínimo, e o risco máximo é US$134 para o lote informado na tela. Se o stop estrutural exceder o máximo, o setup não é aberto.
 - O alvo é dinâmico em 2R: a distância da entrada ao take é duas vezes a distância real da entrada ao stop, recalculada na abertura da vela de execução. Assim, o valor projetado varia proporcionalmente ao stop e ao lote; o stop estrutural mantém risco monetário máximo de US$134 por operação, com a distância de preço ajustada ao lote informado e à hipótese de 100 oz/lote. Confirme o contrato e a convenção de pontos da corretora.
+- A tela do setup exibe o preço e o valor estimado em USD do stop e do take; as linhas do gráfico também exibem esses valores, e o histórico mostra o ganho ou a perda estimados por operação. Os cálculos usam o lote selecionado e a hipótese de 100 oz/lote; não incluem spread ou slippage.
 - O CHoCH marca o pivô de liquidez efetivamente capturado e seu extremo antes da reversão. As marcações só são confirmadas junto com o CHoCH.
 - Cancelamento antes da entrada bloqueia novos sinais na vela do cancelamento e nas cinco velas seguintes (cinco minutos em 1m). Expiração por tempo não inicia o bloqueio. Setups cancelados e expirados não são exibidos no histórico ou no gráfico. O lote padrão é 0,50 e pode ser alterado no painel.
 - Estas regras pertencem ao modo Ao Vivo. O modo Treino continua sendo um gerador de exemplos sintéticos.
@@ -85,7 +86,7 @@ Validação: `npm test`, `npx tsc --noEmit` e `npm run build`.
 - Um retorno ao nível rompido, ou alcançar o alvo antes da entrada, não cancela uma zona respeitada. Apenas uma quebra contrária com displacement altera o contexto; microquebras não cancelam ordens. Um toque executável na entrada não é apagado por uma quebra posterior na mesma vela. O cooldown continua aplicado às invalidações, não a toques válidos.
 - O histórico recebido em vários pacotes é acumulado por timestamp, preservando as velas anteriores e atualizando a vela aberta.
 
-### Contabilização de resultados — BOS/FVG v8
+### Contabilização de resultados — BOS/FVG v9
 
 - Stop e alvo tocados na mesma vela ficam como Indeterminada, fora da taxa de takes/stops. Entrada e alvo tocados juntos na vela de entrada também ficam Indeterminada, pois OHLC de 1m não revela a ordem intrabar.
 - A interface mostra operações executadas e seus resultados; cancelados e expirados não aparecem no histórico nem no gráfico. A contagem de takes considera somente takes e stops.
