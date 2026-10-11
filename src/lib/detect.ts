@@ -1,7 +1,8 @@
 import type { Ann, Candle } from "./generator";
 
-export type LiveStatus = "aguardando" | "ativa" | "take" | "stop" | "expirada" | "cancelada";
+export type LiveStatus = "aguardando" | "ativa" | "take" | "stop" | "expirada" | "cancelada" | "indeterminada";
 export type SignalStrength = "pendente" | "moderado" | "forte" | "sem-confirmacao";
+export const DETECTOR_VERSION = "BOS/FVG v3";
 export const STRENGTH_LABELS: Record<SignalStrength, string> = {
   pendente: "Aguardando retorno",
   moderado: "Moderado / Fraco",
@@ -28,6 +29,7 @@ export type LiveSetup = {
   strengthAt?: number;
   filledAt?: number;
   closedAt?: number;
+  reason?: string;
 };
 
 const PIVOT = 3;
@@ -88,6 +90,54 @@ export function updateStrength(s: LiveSetup, k: Candle, i: number) {
   if ((k.c - near) * s.dir >= 0) s.retestComplete = true;
 }
 
+/** Stop beyond the impulse candle, not merely beyond the narrow gap. */
+export function impulseStop(impulse: Candle, top: number, bottom: number, dir: 1 | -1, atr: number) {
+  const extreme = dir === 1 ? Math.min(impulse.l, bottom) : Math.max(impulse.h, top);
+  return round(extreme - dir * Math.max(POINT, atr * 0.1));
+}
+
+/** Returns true only for a cancellation before entry (which starts cooldown). */
+export function resolveSetup(s: LiveSetup, k: Candle, i: number): boolean {
+  const hitStop = s.dir === 1 ? k.l <= s.stop : k.h >= s.stop;
+  const hitTake = s.dir === 1 ? k.h >= s.take : k.l <= s.take;
+  const finish = (status: LiveStatus, reason: string) => {
+    s.status = status; s.closedAt = i; s.reason = reason;
+  };
+  if (s.status === "aguardando") {
+    if (i - s.fvgAt > MAX_WAIT) { finish("expirada", "Prazo de retorno encerrado"); return false; }
+    const touched = k.l <= s.entry && k.h >= s.entry;
+    if (touched) {
+      // A real touch cannot be relabeled as cancellation using the later close.
+      s.status = "ativa"; s.filledAt = i;
+      updateStrength(s, k, i);
+      const openedOnApproach = (k.o - s.entry) * s.dir >= 0;
+      if (hitStop && (hitTake || !openedOnApproach)) {
+        finish("indeterminada", "OHLC não revela a ordem entre entrada, stop e alvo");
+      } else if (hitStop) {
+        finish("stop", "Entrada tocada antes da violação do stop");
+      } else if (hitTake) {
+        // A close beyond the target proves price reached it after touching entry.
+        if ((k.c - s.take) * s.dir >= 0) finish("take", "Alvo alcançado após entrada na mesma vela");
+        else finish("indeterminada", "Alvo e entrada na mesma vela, sem ordem confirmável");
+      }
+      return false;
+    }
+    const far = s.dir === 1 ? s.fvgBottom : s.fvgTop;
+    if (hitStop || (k.c - far) * s.dir < 0) {
+      finish("cancelada", hitStop ? "Stop violado sem entrada negociável" : "Zona perdida sem toque na entrada");
+      return true;
+    }
+  } else if (s.status === "ativa") {
+    if (hitStop && hitTake) finish("indeterminada", "Stop e alvo tocados na mesma vela");
+    else if (hitStop) finish("stop", "Stop atingido");
+    else {
+      updateStrength(s, k, i);
+      if (hitTake) finish("take", "Alvo atingido");
+    }
+  }
+  return false;
+}
+
 /** Processes every supplied candle, including the live candle, in chronological order. */
 export function detect(c: Candle[]) {
   const anns: Ann[] = [];
@@ -113,34 +163,8 @@ export function detect(c: Candle[]) {
   const cancel = (s: LiveSetup, i: number) => {
     s.status = "cancelada";
     s.closedAt = i;
+    s.reason = "Quebra contrária com displacement";
     cooldownUntil = Math.max(cooldownUntil, i + COOLDOWN_BARS);
-  };
-  const resolve = (s: LiveSetup, i: number) => {
-    const k = c[i]!;
-    const hitStop = s.dir === 1 ? k.l <= s.stop : k.h >= s.stop;
-    const hitTake = s.dir === 1 ? k.h >= s.take : k.l <= s.take;
-    if (s.status === "aguardando") {
-      if (i - s.fvgAt > MAX_WAIT) { s.status = "expirada"; s.closedAt = i; return; }
-      const touched = k.l <= s.entry && k.h >= s.entry;
-      const far = s.dir === 1 ? s.fvgBottom : s.fvgTop;
-      // OHLC cannot order intrabar touches: invalidate conservatively before activation.
-      if (hitStop || (k.c - far) * s.dir < 0) {
-        cancel(s, i); return;
-      }
-      if (touched) {
-        s.status = "ativa"; s.filledAt = i;
-        updateStrength(s, k, i);
-        // No same-bar take: price may have reached it before filling the entry.
-        return;
-      }
-      // Passing the target before entry does not invalidate a respected FVG.
-    } else if (s.status === "ativa") {
-      if (hitStop) { s.status = "stop"; s.closedAt = i; }
-      else {
-        updateStrength(s, k, i);
-        if (hitTake) { s.status = "take"; s.closedAt = i; }
-      }
-    }
   };
 
   for (let i = 0; i < c.length; i++) {
@@ -171,13 +195,14 @@ export function detect(c: Candle[]) {
       if (piv === null || piv >= i) continue;
       const level = dir === 1 ? c[piv]!.h : c[piv]!.l;
       if ((k.c - level) * dir <= 0) continue;
-      // Consume even weak breaks: a later candle must not relabel the same broken pivot.
+      // A weak pierce is not a change of context and cannot cancel valid orders.
+      if (a === null || !isDisplacement(k, dir, level, a)) continue;
       if (dir === 1) lastHigh = null; else lastLow = null;
       const opposite = trend === -dir;
-      if (opposite) for (const s of setups) if (s.status === "aguardando" && s.dir !== dir) cancel(s, i);
-      if (a === null || !isDisplacement(k, dir, level, a)) {
-        if (opposite) { trend = 0; bosCount = 0; }
-        continue;
+      if (opposite) for (const s of setups) if (s.status === "aguardando" && s.dir !== dir) {
+        // If price traded the entry during this candle, resolve the execution first.
+        if (k.l <= s.entry && k.h >= s.entry) resolveSetup(s, k, i);
+        else cancel(s, i);
       }
       // First break seeds direction. Only subsequent continuation proves a trend.
       if (trend === 0) { trend = dir; bosCount = 0; trendStart = i; continue; }
@@ -203,7 +228,9 @@ export function detect(c: Candle[]) {
       // CHoCH is context only: await a continuation BOS in the new direction.
       if (type === "bos") impulses.push({ at: i, pivot: piv, level, dir, atr: a, emitted: new Set() });
     }
-    for (const s of setups) if ((s.status === "aguardando" || s.status === "ativa") && i > s.fvgAt) resolve(s, i);
+    for (const s of setups) if ((s.status === "aguardando" || s.status === "ativa") && i > s.fvgAt && s.filledAt !== i) {
+      if (resolveSetup(s, k, i)) cooldownUntil = Math.max(cooldownUntil, i + COOLDOWN_BARS);
+    }
     impulses = impulses.filter(leg => i - leg.at <= 3 && leg.dir === trend && bosCount >= 1 && i > cooldownUntil);
     for (const leg of impulses) {
       const { dir } = leg;
@@ -213,8 +240,7 @@ export function detect(c: Candle[]) {
         const top = dir === 1 ? c[j]!.l : c[j - 2]!.l;
         const bottom = dir === 1 ? c[j - 2]!.h : c[j]!.h;
         if (top - bottom <= leg.atr * 0.15) continue;
-        const far = dir === 1 ? bottom : top;
-        const stop = round(far - dir * leg.atr * 0.2);
+        const stop = impulseStop(c[j - 1]!, top, bottom, dir, leg.atr);
         // Prior touches are valid; only loss of the zone/stop invalidates reuse.
         if (!respectsFvg(c.slice(j + 1, i + 1), top, bottom, stop, dir)) continue;
         // One open position/order per zone; another BOS can reuse it after closure.
@@ -243,6 +269,9 @@ export function detect(c: Candle[]) {
     );
     if (s.filledAt !== undefined) {
       anns.push({ kind: "text", x: s.filledAt, y: s.entry, label: s.dir === 1 ? "▲ ENTROU" : "▼ ENTROU", pos: s.dir === 1 ? "below" : "above", show: s.filledAt });
+    }
+    if (s.status === "indeterminada") {
+      anns.push({ kind: "text", x: s.closedAt!, y: s.entry, label: "ORDEM INTRABAR INCERTA", pos: s.dir === 1 ? "below" : "above", show: s.closedAt! });
     }
     if (s.status === "take" || s.status === "stop") {
       const y = s.status === "take" ? s.take : s.stop;

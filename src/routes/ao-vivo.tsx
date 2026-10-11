@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getCandles } from "@/lib/market.functions";
-import { detect, STRENGTH_LABELS, type LiveSetup } from "@/lib/detect";
+import { detect, DETECTOR_VERSION, STRENGTH_LABELS, type LiveSetup } from "@/lib/detect";
 import { TrainerChart } from "@/components/TrainerChart";
 import type { TvCandle } from "@/lib/tv.server";
 
@@ -34,6 +34,7 @@ const STATUS: Record<LiveSetup["status"], { label: string; cls: string }> = {
   take: { label: "Take ✓", cls: "text-bull" },
   stop: { label: "Stop ✗", cls: "text-bear" },
   expirada: { label: "Expirada", cls: "text-muted-foreground" },
+  indeterminada: { label: "Indeterminada", cls: "text-muted-foreground" },
   cancelada: { label: "Cancelada", cls: "text-muted-foreground" },
 };
 
@@ -77,6 +78,8 @@ function Live() {
 
   const recent = [...setups].reverse().slice(0, 12);
   const closed = setups.filter((s) => s.status === "take" || s.status === "stop");
+  const uncertain = setups.filter(s => s.status === "indeterminada").length;
+  const canceled = setups.filter(s => s.status === "cancelada").length;
   const wins = closed.filter((s) => s.status === "take").length;
   const open = [...setups].reverse().find((s) => s.status === "aguardando" || s.status === "ativa");
   const last = raw[raw.length - 1];
@@ -118,7 +121,7 @@ function Live() {
             }}
           />
           <div className="absolute left-3 top-2 font-mono text-xs text-muted-foreground">
-            OANDA:XAUUSD · {TFS.find((t) => t.v === tf)?.l} {stale && "· mercado fechado"}
+            {DETECTOR_VERSION} · OANDA:XAUUSD · {TFS.find((t) => t.v === tf)?.l} {stale && "· mercado fechado"}
           </div>
           {loading && <div className="absolute inset-0 grid place-items-center text-muted-foreground">Carregando velas reais…</div>}
           {error && !raw.length && (
@@ -153,13 +156,14 @@ function Live() {
               <span>Histórico no gráfico</span>
               <span>{wins}/{closed.length} takes</span>
             </div>
-            <p className="text-xs text-muted-foreground mt-2">{raw.length.toLocaleString("pt-BR")} velas carregadas{cooldownRemaining > 0 ? ` · Bloqueio: ${cooldownRemaining} velas restantes` : ""}</p>
+            <p className="text-xs text-muted-foreground mt-2">{DETECTOR_VERSION} · {raw.length.toLocaleString("pt-BR")} velas carregadas{cooldownRemaining > 0 ? ` · Bloqueio: ${cooldownRemaining} velas restantes` : ""}</p>
+            <p className="text-xs text-muted-foreground mt-1">{canceled} canceladas antes da entrada · {uncertain} indeterminadas (fora da estatística)</p>
             <ul className="mt-2 divide-y divide-border text-sm">
               {recent.map((s) => (
                 <li key={s.id}>
                   <button onClick={() => jump(s)} className="w-full flex justify-between py-1.5 hover:text-primary text-left">
                     <span>{s.dir === 1 ? "▲" : "▼"} {s.type === "choch" ? "CHoCH" : "BOS"} · {times[s.fvgAt] ? new Date(times[s.fvgAt]! * 1000).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : ""}</span>
-                    <span className="text-right"><span className={STATUS[s.status].cls}>{STATUS[s.status].label}</span><small className="block text-muted-foreground">{STRENGTH_LABELS[s.strength]}</small></span>
+                    <span className="text-right"><span className={STATUS[s.status].cls}>{STATUS[s.status].label}</span><small className="block text-muted-foreground" title={s.reason}>{s.reason ?? STRENGTH_LABELS[s.strength]}</small></span>
                   </button>
                 </li>
               ))}

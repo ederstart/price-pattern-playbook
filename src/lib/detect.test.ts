@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detect, fvgEntry, isDisplacement, priorAtr, respectsFvg, takePrice, updateStrength, type LiveSetup } from "./detect";
+import { detect, fvgEntry, isDisplacement, priorAtr, respectsFvg, impulseStop, resolveSetup, takePrice, updateStrength, type LiveSetup } from "./detect";
 import type { Candle } from "./generator";
 
 const prices = [...Array<number>(14).fill(100), 102, 104, 103, 102, 101, 102, 105, 109, 107, 105, 103, 104, 108, 113, 111, 109, 107, 108, 112, 117, 115, 113, 111, 112, 113, 112, 111, 112, 110, 109, 106, 102, 98];
@@ -30,6 +30,11 @@ describe("confirmed structure and displacement", () => {
     expect(isDisplacement({ o: 99.6, c: 101.01, h: 101.1, l: 99.5 }, 1, 101, 2)).toBe(false);
     expect(isDisplacement({ o: 102, c: 101.5, h: 102.1, l: 101.4 }, 1, 101, 0.5)).toBe(false);
   });
+  it("does not reset a proven direction on a weak contrary pierce", () => {
+    const c = candles(prices.slice(0, 28));
+    c[25] = { o: 100.95, c: 100.85, h: 105, l: 100.75 };
+    expect(detect(c).anns).toContainEqual(expect.objectContaining({ kind: "line", label: "BOS", show: 27 }));
+  });
   it("discards contrary breaks before a continuation BOS", () => {
     const result = detect(candles([...prices.slice(0, 25), 101, 97, 93]));
     expect(result.anns.some(a => a.kind === "line" && a.label === "CHoCH")).toBe(false);
@@ -50,7 +55,7 @@ describe("confirmed structure and displacement", () => {
   });
   it("cancellation silences the next ten bars, including the boundary", () => {
     const c = candles(prices);
-    c[28] = { o: 113, c: 103, h: 113.1, l: 102 };
+    c[28] = { o: 103, c: 102, h: 103.5, l: 101 };
     expect(detect(c.slice(0, 29)).setups[0]).toMatchObject({ status: "cancelada", closedAt: 28 });
     for (let i = 28; i <= 38; i++) {
       const result = detect(c.slice(0, i + 1));
@@ -60,16 +65,16 @@ describe("confirmed structure and displacement", () => {
     }
     expect(detect(c).cooldownRemaining).toBe(0);
   });
-  it("violating a pending stop cancels before activation and starts cooldown", () => {
+  it("a gap through a pending stop without trading entry cancels and starts cooldown", () => {
     const c = candles(prices.slice(0, 28));
-    c.push({ o: 113, c: 103, h: 113.1, l: 102 });
+    c.push({ o: 103, c: 102, h: 103.5, l: 101 });
     expect(detect(c).setups[0]).toMatchObject({ status: "cancelada", closedAt: 28 });
     expect(detect(c).setups[0]?.filledAt).toBeUndefined();
     expect(detect(c).cooldownRemaining).toBe(10);
   });
   it.each([false, true])("fills a valid return and resolves its take on a later candle (mirror=%s)", reversed => {
     const c = candles(prices.slice(0, 28));
-    c.push({ o: 113, c: 108, h: 113.1, l: 106 });
+    c.push({ o: 110, c: 108, h: 110.1, l: 106 });
     const mapped = () => c.map(k => reversed ? mirror(k) : k);
     expect(detect(mapped()).setups[0]).toMatchObject({ status: "ativa", filledAt: 28 });
     c.push({ o: 108, c: 112, h: 112.1, l: 107.9 });
@@ -100,9 +105,9 @@ describe("confirmed structure and displacement", () => {
     expect(result.anns.some(a => a.kind === "line" && a.label === "CHoCH")).toBe(true);
     expect(result.setups.some(s => s.dir === -1)).toBe(false);
   });
-  it("cancels an old-direction pending entry before a contrary break can activate it", () => {
+  it("preserves an actually touched entry instead of retroactively canceling a losing trade", () => {
     const result = detect(candles(prices));
-    expect(result.setups.filter(s => s.breakAt === 33 && s.fvgAt === 33)[0]).toMatchObject({ status: "cancelada", closedAt: 42 });
+    expect(result.setups.filter(s => s.breakAt === 33 && s.fvgAt === 33)[0]).toMatchObject({ status: "stop", filledAt: 42, closedAt: 44 });
   });
   it("does not draw a later CHoCH or sweep before confirmation", () => {
     const early = detect(candles(prices.slice(0, 42)));
@@ -146,5 +151,51 @@ describe("FVG entry, rejection and target", () => {
     expect(takePrice(2650, 2652, -1, [])).toBe(2645);
     expect(takePrice(2650, 2648, 1, [2651, 2654, 2658])).toBe(2654);
     expect(takePrice(2650, 2652, -1, [2649, 2646, 2640])).toBe(2646);
+  });
+});
+
+
+describe("execution accounting and impulse stop regressions", () => {
+  function pending(dir: 1 | -1): LiveSetup {
+    const s = setup(dir);
+    s.status = "aguardando";
+    s.take = Math.round((s.entry + dir * 5) * 100) / 100;
+    return s;
+  }
+  const reflected = (k: Candle, dir: 1 | -1) => dir === 1 ? k : mirror(k);
+  it.each([1, -1] as const)("counts a provable same-candle take after entry for direction %s", dir => {
+    const s = pending(dir);
+    resolveSetup(s, reflected({ o: 109, c: 112, h: 112.2, l: 105 }, dir), 21);
+    expect(s).toMatchObject({ status: "take", filledAt: 21, closedAt: 21 });
+  });
+  it.each([1, -1] as const)("does not count an unordered target touch as a win or later loss for direction %s", dir => {
+    const s = pending(dir);
+    resolveSetup(s, reflected({ o: 109, c: 108, h: 112.2, l: 105 }, dir), 21);
+    expect(s.status).toBe("indeterminada");
+  });
+  it.each([1, -1] as const)("counts entry then stop instead of cancellation for direction %s", dir => {
+    const s = pending(dir);
+    const canceled = resolveSetup(s, reflected({ o: 108, c: 98.5, h: 109, l: 98 }, dir), 21);
+    expect(canceled).toBe(false);
+    expect(s).toMatchObject({ status: "stop", filledAt: 21, closedAt: 21 });
+  });
+  it("marks simultaneous stop and take on an active position as unordered", () => {
+    const s = setup();
+    resolveSetup(s, { o: 108, c: 112, h: 116, l: 98 }, 22);
+    expect(s.status).toBe("indeterminada");
+  });
+  it("places the stop beyond the displacement candle, including its wick", () => {
+    const impulse = { o: 114, c: 99, h: 115, l: 98 };
+    expect(impulseStop(impulse, 110, 100, -1, 2)).toBe(115.2);
+    expect(impulseStop(mirror(impulse), 110, 100, 1, 2)).toBe(94.8);
+  });
+  it("takes the bearish FVG retest after a large red impulse without another BOS", () => {
+    const s = pending(-1);
+    s.stop = impulseStop({ o: 114, c: 99, h: 115, l: 98 }, 110, 100, -1, 2);
+    resolveSetup(s, { o: 101, c: 103, h: 104, l: 100 }, 21);
+    expect(s).toMatchObject({ status: "ativa", filledAt: 21 });
+    resolveSetup(s, { o: 103, c: 98.5, h: 103.2, l: 98 }, 22);
+    expect(s).toMatchObject({ status: "take", closedAt: 22 });
+    expect(s.take).toBe(98.82);
   });
 });
