@@ -10,4 +10,5 @@
 <!-- LOVABLE:END -->
 
 - Real XAUUSD candles come from the unofficial TradingView chart websocket in src/lib/tv.server.ts (fetch-upgrade on edge, undici WebSocket in dev); user chose it over official feeds.
-- Setup detection (CHoCH/BOS + FVG, entry 50%, stop beyond FVG, take at next pivot) lives in src/lib/detect.ts and is shared by nothing else; the simulator uses src/lib/generator.ts.
+- Setup detection (CHoCH/BOS + FVG, entry 38.2%, stop beyond FVG, take 5.00 or untouched liquidity within 5.00 and at least 1.5R) lives in src/lib/detect.ts and is shared by nothing else; the simulator uses src/lib/generator.ts.
+

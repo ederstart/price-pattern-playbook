@@ -60,3 +60,17 @@ cd <repository-name>
 npm i
 npm run dev
 ```
+
+
+## Regras do detector ao vivo
+
+- A primeira quebra expressiva estabelece a direção; pelo menos um BOS de continuação é necessário antes de um CHoCH. Quebras fracas consomem o pivô e não são promovidas a sinal em uma vela posterior.
+- Rompimento: corpo direcional de pelo menos 60% da amplitude e 0,7 × ATR. O ATR usa as 14 velas anteriores; a folga de fechamento é o maior valor entre 0,01 e 0,05 × ATR. Isso mede deslocamento de preço, não confirma volume negociado. Somente velas fechadas entram no detector.
+- O gráfico de 1 minuto solicita 4.000 velas. O total realmente recebido aparece na interface; sessões, pausas e disponibilidade da fonte podem reduzir o histórico.
+- Entrada a 38,2% do FVG, arredondada a duas casas. O primeiro retorno fica Moderado / Fraco abaixo de 50%. Forte / Ideal exige profundidade máxima de 50%–70%, vela direcional, pavio de rejeição de pelo menos 25% da amplitude e fechamento de volta além da borda próxima do FVG. Retornos mais profundos ou sem rejeição recebem Sem rejeição ideal. A classificação não antecipa o retorno nem é melhorada após encerrar esse primeiro reteste.
+- Take padrão: 5,00 de variação no XAUUSD (500 pontos de 0,01, não lucro líquido da conta). Uma liquidez ainda não capturada pode antecipar o alvo se estiver a até 5,00 e oferecer pelo menos 1,5R.
+- O CHoCH marca o pivô de liquidez efetivamente capturado e seu extremo antes da reversão. As marcações só são confirmadas junto com o CHoCH.
+- Cancelamento antes da entrada bloqueia novos sinais na vela do cancelamento e nas dez velas seguintes (dez minutos em 1m). Expiração por tempo não inicia o bloqueio. Violação do stop ou fechamento além do FVG antes da ativação cancela o setup. Com OHLC não se conhece a ordem intrabar: violação tem prioridade, operações ativas priorizam stop e não há take na própria vela de entrada.
+- Estas regras pertencem ao modo Ao Vivo. O modo Treino continua sendo um gerador de exemplos sintéticos.
+
+Validação: `npm test`, `npx tsc --noEmit` e `npm run build`.

@@ -1,0 +1,111 @@
+import { describe, expect, it } from "vitest";
+import { detect, fvgEntry, isDisplacement, priorAtr, takePrice, updateStrength, type LiveSetup } from "./detect";
+import type { Candle } from "./generator";
+
+const prices = [...Array<number>(14).fill(100), 102, 104, 103, 102, 101, 102, 105, 109, 107, 105, 103, 104, 108, 113, 111, 109, 107, 108, 112, 117, 115, 113, 111, 112, 113, 112, 111, 112, 110, 109, 106, 102, 98];
+function candles(values: number[]): Candle[] {
+  return values.map((c, i) => {
+    const o = values[i - 1] ?? c;
+    return { o, c, h: Math.max(o, c) + (c >= o ? 0.12 : 0.05), l: Math.min(o, c) - (c < o ? 0.12 : 0.05) };
+  });
+}
+function setup(dir: 1 | -1 = 1): LiveSetup {
+  return { id: 0, type: "bos", dir, breakAt: 20, breakLevel: 110, fvgAt: 20, fvgStart: 18,
+    fvgTop: 110, fvgBottom: 100, entry: fvgEntry(110, 100, dir), stop: dir === 1 ? 99 : 111,
+    take: dir === 1 ? 115 : 95, status: "ativa", strength: "pendente", maxDepth: 0, retestComplete: false };
+}
+const mirror = (c: Candle): Candle => ({ o: 210 - c.o, c: 210 - c.c, h: 210 - c.l, l: 210 - c.h });
+
+describe("confirmed structure and displacement", () => {
+  it("uses only the 14 preceding true ranges", () => {
+    const c = Array.from({ length: 15 }, () => ({ o: 100, c: 100, h: 101, l: 99 }));
+    c[14] = { o: 100, c: 200, h: 200, l: 100 };
+    expect(priorAtr(c, 13)).toBeNull();
+    expect(priorAtr(c, 14)).toBe(2);
+  });
+  it("requires directional body, 60% body, 0.7 ATR and closing margin", () => {
+    expect(isDisplacement({ o: 100, c: 101.5, h: 101.6, l: 99.9 }, 1, 101, 2)).toBe(true);
+    expect(isDisplacement({ o: 101.4, c: 101.5, h: 102, l: 100 }, 1, 101, 2)).toBe(false);
+    expect(isDisplacement({ o: 100, c: 101.2, h: 101.3, l: 99.9 }, 1, 101, 2)).toBe(false);
+    expect(isDisplacement({ o: 99.6, c: 101.01, h: 101.1, l: 99.5 }, 1, 101, 2)).toBe(false);
+    expect(isDisplacement({ o: 102, c: 101.5, h: 102.1, l: 101.4 }, 1, 101, 0.5)).toBe(false);
+  });
+  it("discards contrary breaks before a continuation BOS", () => {
+    const result = detect(candles([...prices.slice(0, 25), 101, 97, 93]));
+    expect(result.anns.some(a => a.kind === "line" && a.label === "CHoCH")).toBe(false);
+    expect(result.setups).toHaveLength(0);
+  });
+  it.each([false, true])("confirms BOS before CHoCH, with real swept-pivot annotations (mirror=%s)", reversed => {
+    const c = candles(prices).map(k => reversed ? mirror(k) : k);
+    const result = detect(c);
+    const breaks = result.anns.filter(a => a.kind === "line" && ["BOS", "CHoCH"].includes(a.label));
+    expect(breaks.map(a => a.kind === "line" ? a.label : "")).toEqual(["BOS", "CHoCH"]);
+    const liquidity = result.anns.find(a => a.kind === "text" && a.label === "LIQUIDEZ");
+    expect(liquidity).toMatchObject({ x: 27, show: 42 });
+    expect(result.anns).toContainEqual(expect.objectContaining({ kind: "line", x1: 27, x2: 33, label: "" }));
+    expect(result.anns).toContainEqual(expect.objectContaining({ label: "LIQUIDEZ VARRIDA / REVERSÃO", x: 33 }));
+  });
+  it("cancellation silences the next ten bars, including the boundary", () => {
+    const c = candles(prices);
+    expect(detect(c.slice(0, 29)).setups[0]).toMatchObject({ status: "cancelada", closedAt: 28 });
+    for (let i = 28; i <= 38; i++) {
+      const result = detect(c.slice(0, i + 1));
+      expect(result.cooldownRemaining).toBe(38 - i);
+      expect(result.setups.filter(s => s.breakAt > 28 && s.breakAt <= 38)).toHaveLength(0);
+      expect(result.anns.filter(a => a.kind === "line" && ["BOS", "CHoCH"].includes(a.label) && a.show > 28 && a.show <= 38)).toHaveLength(0);
+    }
+    expect(detect(c).setups.some(s => s.breakAt > 38)).toBe(true);
+  });
+  it("violating a pending stop cancels before activation and starts cooldown", () => {
+    const c = candles(prices.slice(0, 28));
+    c.push({ o: 113, c: 103, h: 113.1, l: 102 });
+    expect(detect(c).setups[0]).toMatchObject({ status: "cancelada", closedAt: 28 });
+    expect(detect(c).setups[0]?.filledAt).toBeUndefined();
+    expect(detect(c).cooldownRemaining).toBe(10);
+  });
+  it.each([false, true])("fills a valid return and resolves its take on a later candle (mirror=%s)", reversed => {
+    const c = candles(prices.slice(0, 28));
+    c.push({ o: 113, c: 108, h: 113.1, l: 106 });
+    const mapped = () => c.map(k => reversed ? mirror(k) : k);
+    expect(detect(mapped()).setups[0]).toMatchObject({ status: "ativa", filledAt: 28 });
+    c.push({ o: 108, c: 112, h: 112.1, l: 107.9 });
+    expect(detect(mapped()).setups[0]).toMatchObject({ status: "take", closedAt: 29 });
+  });
+  it("does not draw a later CHoCH or sweep before confirmation", () => {
+    const early = detect(candles(prices.slice(0, 42)));
+    expect(early.anns.some(a => a.kind === "text" && a.label.includes("LIQUIDEZ"))).toBe(false);
+    expect(early.anns.some(a => a.kind === "line" && a.label === "CHoCH")).toBe(false);
+  });
+});
+
+describe("FVG entry, rejection and target", () => {
+  it("enters at 38.2% from the correct side", () => {
+    expect(fvgEntry(110, 100, 1)).toBe(106.18);
+    expect(fvgEntry(110, 100, -1)).toBe(103.82);
+  });
+  it.each([1, -1] as const)("classifies shallow and ideal retests for direction %s", dir => {
+    const shallow = setup(dir), ideal = setup(dir), deep = setup(dir);
+    const bar = (k: Candle) => dir === 1 ? k : mirror(k);
+    updateStrength(shallow, bar({ o: 109, c: 111, h: 112, l: 106 }), 21);
+    updateStrength(ideal, bar({ o: 108, c: 111, h: 112, l: 104 }), 21);
+    updateStrength(deep, bar({ o: 108, c: 111, h: 112, l: 102 }), 21);
+    expect(shallow.strength).toBe("moderado");
+    expect(ideal.strength).toBe("forte");
+    expect(deep.strength).toBe("sem-confirmacao");
+    updateStrength(shallow, bar({ o: 108, c: 111, h: 112, l: 104 }), 22);
+    expect(shallow.strength).toBe("moderado");
+  });
+  it("requires rejection, not depth alone", () => {
+    const s = setup();
+    updateStrength(s, { o: 109, c: 105, h: 110, l: 104 }, 21);
+    expect(s.strength).toBe("sem-confirmacao");
+    updateStrength(s, { o: 106, c: 111, h: 112, l: 104 }, 22);
+    expect(s.strength).toBe("forte");
+  });
+  it("uses 5.00 by default or nearer liquidity at least 1.5R", () => {
+    expect(takePrice(2650, 2648, 1, [])).toBe(2655);
+    expect(takePrice(2650, 2652, -1, [])).toBe(2645);
+    expect(takePrice(2650, 2648, 1, [2651, 2654, 2658])).toBe(2654);
+    expect(takePrice(2650, 2652, -1, [2649, 2646, 2640])).toBe(2646);
+  });
+});

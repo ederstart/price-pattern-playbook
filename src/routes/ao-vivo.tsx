@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getCandles } from "@/lib/market.functions";
-import { detect, type LiveSetup } from "@/lib/detect";
+import { detect, STRENGTH_LABELS, type LiveSetup } from "@/lib/detect";
 import { TrainerChart } from "@/components/TrainerChart";
 import type { TvCandle } from "@/lib/tv.server";
 
@@ -53,7 +53,7 @@ function Live() {
     setRaw([]);
     setFollow(true);
     const load = async () => {
-      const r = await getCandles({ data: { tf, count: 1500 } }).catch((e) => ({ ok: false as const, error: String(e), candles: [] }));
+      const r = await getCandles({ data: { tf, count: tf === "1" ? 4000 : 1500 } }).catch((e) => ({ ok: false as const, error: String(e), candles: [] }));
       if (!alive || tfRef.current !== tf) return;
       setLoading(false);
       if (r.ok && r.candles.length) { setRaw(r.candles); setError(null); }
@@ -66,7 +66,12 @@ function Live() {
 
   const candles = useMemo(() => raw.map(({ o, h, l, c }) => ({ o, h, l, c })), [raw]);
   const times = useMemo(() => raw.map((c) => c.t), [raw]);
-  const { anns, setups } = useMemo(() => detect(candles), [candles]);
+  // The last provider candle can still be forming; never confirm breaks on it.
+  const closedCandles = useMemo(() => {
+    const seconds = tf === "1D" ? 86400 : Number(tf) * 60;
+    return raw.filter(bar => bar.t + seconds <= Date.now() / 1000);
+  }, [raw, tf]);
+  const { anns, setups, cooldownRemaining } = useMemo(() => detect(closedCandles), [closedCandles]);
   const end = follow ? candles.length + 5 : view.end;
 
   const jump = (s: LiveSetup) => {
@@ -135,6 +140,7 @@ function Live() {
                   {open.dir === 1 ? "Compra" : "Venda"} · {open.type === "choch" ? "CHoCH" : "BOS"} + FVG
                 </div>
                 <div className={`text-sm ${STATUS[open.status].cls}`}>{STATUS[open.status].label}</div>
+                <div className="text-xs mt-1 text-muted-foreground">{STRENGTH_LABELS[open.strength]} · entrada 38,2%</div>
                 <div className="grid grid-cols-3 gap-2 text-center mt-3">
                   <div className="stat stat-entry"><span>Entrada</span><b>{open.entry.toFixed(2)}</b></div>
                   <div className="stat stat-stop"><span>Stop</span><b>{open.stop.toFixed(2)}</b></div>
@@ -151,12 +157,13 @@ function Live() {
               <span>Histórico no gráfico</span>
               <span>{wins}/{closed.length} takes</span>
             </div>
+            <p className="text-xs text-muted-foreground mt-2">{raw.length.toLocaleString("pt-BR")} velas carregadas{cooldownRemaining > 0 ? ` · Bloqueio: ${cooldownRemaining} velas restantes` : ""}</p>
             <ul className="mt-2 divide-y divide-border text-sm">
               {recent.map((s) => (
                 <li key={s.id}>
                   <button onClick={() => jump(s)} className="w-full flex justify-between py-1.5 hover:text-primary text-left">
                     <span>{s.dir === 1 ? "▲" : "▼"} {s.type === "choch" ? "CHoCH" : "BOS"} · {times[s.fvgAt] ? new Date(times[s.fvgAt]! * 1000).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : ""}</span>
-                    <span className={STATUS[s.status].cls}>{STATUS[s.status].label}</span>
+                    <span className="text-right"><span className={STATUS[s.status].cls}>{STATUS[s.status].label}</span><small className="block text-muted-foreground">{STRENGTH_LABELS[s.strength]}</small></span>
                   </button>
                 </li>
               ))}
@@ -169,3 +176,4 @@ function Live() {
     </main>
   );
 }
+
