@@ -173,7 +173,7 @@ function Live() {
               if (typeof Notification === "undefined") return;
               setNotify((await Notification.requestPermission()) === "granted");
             }}
-          >{notify ? "🔔 Alertas ativos" : "🔕 Ativar alertas"}</button>
+          >{notify ? "Alertas ativos ✓" : "Ativar alertas"}</button>
         </div>
       </header>
 
