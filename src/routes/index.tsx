@@ -127,7 +127,7 @@ function Live() {
       const msg = `${s.dir === 1 ? "COMPRA" : "VENDA"} · ${s.type === "choch" ? "CHoCH" : "BOS"} + FVG · ${s.status === "ativa" ? "entrou" : "rejeição confirmada"} · ${s.entry.toFixed(2)}`;
       beep();
       if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-        try { new Notification(`XAUUSD ${TFS.find((t) => t.v === tf)?.l}`, { body: msg, tag: keys[n] }); } catch { /* */ }
+        try { new Notification(`XAUUSD ${TFS.find((t) => t.v === tf)?.l}`, { body: msg, tag: keys[n]! }); } catch { /* */ }
       }
     }
   }, [setups, times, tf]);
