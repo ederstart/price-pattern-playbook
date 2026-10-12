@@ -2,16 +2,11 @@ import type { Ann, Candle } from "./generator";
 
 export type LiveStatus = "aguardando" | "confirmada" | "ativa" | "take" | "stop" | "expirada" | "cancelada" | "indeterminada";
 export type SignalStrength = "pendente" | "moderado" | "forte" | "sem-confirmacao";
-export const DETECTOR_VERSION = "BOS/FVG v10";
+export const DETECTOR_VERSION = "BOS/FVG v9";
 export const CONTRACT_OUNCES_PER_LOT = 100;
 export const RISK_REWARD_RATIO = 2;
 export const MAX_STOP_LOSS_USD = 134;
-export const DEFAULT_LOT_SIZE = 0.25;
-/** FVG must be at least this fraction of the recent typical gap (last 10 bull + 10 bear). */
-export const MIN_FVG_REL = 0.6;
-/** FVG larger than this multiple of the typical gap is a news/spike zone and is skipped. */
-export const MAX_FVG_REL = 3;
-const FVG_SAMPLE = 10;
+export const DEFAULT_LOT_SIZE = 0.5;
 export const DEFAULT_FVG_ENTRY_DEPTH = 0.15;
 export const STRENGTH_LABELS: Record<SignalStrength, string> = {
   pendente: "Aguardando retorno",
@@ -272,7 +267,6 @@ export function detect(
     lotSize?: number;
     entryDepth?: number;
     minFvgAtr?: number;
-    relativeFvg?: boolean;
     includeDiagnostics?: boolean;
   } = {},
 ) {
@@ -320,10 +314,6 @@ export function detect(
   let id = 0;
   type Impulse = { at: number; pivot: number; level: number; dir: 1 | -1; type: "choch" | "bos"; atr: number; emitted: Set<number> };
   let impulses: Impulse[] = [];
-  const relativeFvg = options.relativeFvg ?? true;
-  const bullGaps: number[] = [];
-  const bearGaps: number[] = [];
-  let typicalGap: number | null = null;
 
   const cancel = (s: LiveSetup, i: number) => {
     s.status = "cancelada";
@@ -355,16 +345,6 @@ export function detect(
       takenHighs.add(pivot); highSweep = { pivot, at: i, level: c[pivot]!.h, extreme: k.h };
     }
     const a = priorAtr(c, i);
-    // Typical gap from the last 10 bullish and 10 bearish raw FVGs before this candle.
-    if (bullGaps.length >= FVG_SAMPLE / 2 && bearGaps.length >= FVG_SAMPLE / 2) {
-      const all = [...bullGaps, ...bearGaps].sort((x, y) => x - y);
-      typicalGap = all[Math.floor(all.length / 2)]!;
-    } else typicalGap = null;
-    if (i >= 2) {
-      const up = c[i]!.l - c[i - 2]!.h, dn = c[i - 2]!.l - c[i]!.h;
-      if (up > 0) { bullGaps.push(up); if (bullGaps.length > FVG_SAMPLE) bullGaps.shift(); }
-      if (dn > 0) { bearGaps.push(dn); if (bearGaps.length > FVG_SAMPLE) bearGaps.shift(); }
-    }
     for (const dir of [1, -1] as const) {
       const piv = dir === 1 ? lastHigh : lastLow;
       if (piv === null || piv >= i) continue;
@@ -449,12 +429,6 @@ export function detect(
         if (size <= leg.atr * minFvgAtr) {
           diagnostics.fvgTooSmall++;
           reason = "gap menor ou igual a 0,15 ATR";
-        } else if (relativeFvg && typicalGap !== null && size < typicalGap * MIN_FVG_REL) {
-          diagnostics.fvgTooSmall++;
-          reason = "FVG pequeno comparado aos 20 últimos";
-        } else if (relativeFvg && typicalGap !== null && size > typicalGap * MAX_FVG_REL) {
-          diagnostics.fvgTooSmall++;
-          reason = "FVG gigante / desproporcional";
         }
         if (reason !== "selected") {
           if (options.includeDiagnostics && diagnostics.samples.length < 40) diagnostics.samples.push({ breakAt: leg.at, fvgAt: j, dir, size, atr: leg.atr, reason });
