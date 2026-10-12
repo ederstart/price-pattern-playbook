@@ -14,7 +14,81 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      candles: {
+        Row: {
+          c: number
+          h: number
+          l: number
+          o: number
+          t: number
+          tf: string
+        }
+        Insert: {
+          c: number
+          h: number
+          l: number
+          o: number
+          t: number
+          tf: string
+        }
+        Update: {
+          c?: number
+          h?: number
+          l?: number
+          o?: number
+          t?: number
+          tf?: string
+        }
+        Relationships: []
+      }
+      operations: {
+        Row: {
+          closed_time: number | null
+          created_at: string
+          dir: number
+          entry: number
+          fvg_time: number
+          key: string
+          reason: string | null
+          status: string
+          stop: number
+          strength: string
+          take: number
+          tf: string
+          type: string
+        }
+        Insert: {
+          closed_time?: number | null
+          created_at?: string
+          dir: number
+          entry: number
+          fvg_time: number
+          key: string
+          reason?: string | null
+          status: string
+          stop: number
+          strength: string
+          take: number
+          tf: string
+          type: string
+        }
+        Update: {
+          closed_time?: number | null
+          created_at?: string
+          dir?: number
+          entry?: number
+          fvg_time?: number
+          key?: string
+          reason?: string | null
+          status?: string
+          stop?: number
+          strength?: string
+          take?: number
+          tf?: string
+          type?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
