@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getCandles } from "@/lib/market.functions";
 import { CONTRACT_OUNCES_PER_LOT, DEFAULT_FVG_ENTRY_DEPTH, DEFAULT_LOT_SIZE, detect, DETECTOR_VERSION, RISK_REWARD_RATIO, STRENGTH_LABELS, type LiveSetup } from "@/lib/detect";
@@ -12,6 +12,8 @@ export const Route = createFileRoute("/")({
       { name: "description", content: "Gráfico real do XAUUSD com detecção automática de CHoCH, BOS, FVG, entrada, stop e take." },
       { property: "og:title", content: "XAUUSD Ao Vivo — setups em tempo real" },
       { property: "og:description", content: "Velas reais do ouro com marcações automáticas da estratégia." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary" },
     ],
   }),
   component: Live,
@@ -45,14 +47,45 @@ const STATUS: Record<LiveSetup["status"], { label: string; cls: string }> = {
   cancelada: { label: "Cancelada", cls: "text-muted-foreground" },
 };
 
+type Hist = { key: string; type: string; dir: number; status: string; fvg_time: number; entry: number; stop: number; take: number };
+
+function beep() {
+  try {
+    const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const ctx = new Ctx();
+    [880, 1320].forEach((f, k) => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.frequency.value = f; o.connect(g); g.connect(ctx.destination);
+      g.gain.setValueAtTime(0.2, ctx.currentTime + k * 0.18);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + k * 0.18 + 0.16);
+      o.start(ctx.currentTime + k * 0.18); o.stop(ctx.currentTime + k * 0.18 + 0.17);
+    });
+  } catch { /* */ }
+}
+
 function Live() {
   const [tf, setTf] = useState<Tf>("1");
   const [raw, setRaw] = useState<TvCandle[]>([]);
+  const [history, setHistory] = useState<Hist[]>([]);
+  const [now, setNow] = useState(() => Date.now());
+  const [notify, setNotify] = useState(false);
+  const seen = useRef<Set<string> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [follow, setFollow] = useState(true);
   const [lotSize, setLotSize] = useState(DEFAULT_LOT_SIZE);
   const [view, setView] = useState({ end: 0, win: 120 });
+  useEffect(() => {
+    const saved = Number(localStorage.getItem("lotSize"));
+    if (Number.isFinite(saved) && saved > 0) setLotSize(saved);
+    const savedTf = localStorage.getItem("tf");
+    if (savedTf && TFS.some((t) => t.v === savedTf)) setTf(savedTf as Tf);
+    setNotify(typeof Notification !== "undefined" && Notification.permission === "granted");
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  useEffect(() => { localStorage.setItem("lotSize", String(lotSize)); }, [lotSize]);
+  useEffect(() => { localStorage.setItem("tf", tf); seen.current = null; }, [tf]);
   const tfRef = useRef(tf);
   tfRef.current = tf;
 
@@ -62,10 +95,10 @@ function Live() {
     setRaw([]);
     setFollow(true);
     const load = async () => {
-      const r = await getCandles({ data: { tf, count: tf === "1" ? 6000 : 1500 } }).catch((e) => ({ ok: false as const, error: String(e), candles: [] }));
+      const r = await getCandles({ data: { tf } }).catch((e) => ({ ok: false as const, error: String(e), candles: [], history: [] }));
       if (!alive || tfRef.current !== tf) return;
       setLoading(false);
-      if (r.ok && r.candles.length) { setRaw(r.candles); setError(null); }
+      if (r.ok && r.candles.length) { setRaw(r.candles); setHistory(r.history as Hist[]); setError(null); }
       else if (!r.ok) setError(r.error);
     };
     load();
@@ -82,6 +115,28 @@ function Live() {
     () => detect(confirmedCandles, { lotSize, ...(tf === "1" ? { times: confirmedTimes } : {}) }),
     [confirmedCandles, confirmedTimes, lotSize, tf],
   );
+  // Alert once per setup when it confirms or enters; the first load only primes the list.
+  useEffect(() => {
+    if (!times.length) return;
+    const live = setups.filter((s) => s.status === "confirmada" || s.status === "ativa");
+    const keys = live.map((s) => `${times[s.fvgAt]}-${s.dir}-${s.status}`);
+    if (seen.current === null) { seen.current = new Set(keys); return; }
+    for (const [n, s] of live.entries()) {
+      if (seen.current.has(keys[n]!)) continue;
+      seen.current.add(keys[n]!);
+      const msg = `${s.dir === 1 ? "COMPRA" : "VENDA"} · ${s.type === "choch" ? "CHoCH" : "BOS"} + FVG · ${s.status === "ativa" ? "entrou" : "rejeição confirmada"} · ${s.entry.toFixed(2)}`;
+      beep();
+      if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+        try { new Notification(`XAUUSD ${TFS.find((t) => t.v === tf)?.l}`, { body: msg, tag: keys[n] }); } catch { /* */ }
+      }
+    }
+  }, [setups, times, tf]);
+
+  const tfSec = tf === "1D" ? 86400 : Number(tf) * 60;
+  const lastT = raw[raw.length - 1]?.t;
+  const remain = lastT ? Math.max(0, lastT + tfSec - Math.floor(now / 1000)) : 0;
+  const clock = `${remain >= 3600 ? `${Math.floor(remain / 3600)}:` : ""}${String(Math.floor((remain % 3600) / 60)).padStart(2, "0")}:${String(remain % 60).padStart(2, "0")}`;
+
   const end = follow ? candles.length + 5 : view.end;
 
   const jump = (s: LiveSetup) => {
@@ -90,7 +145,7 @@ function Live() {
   };
 
   const recent = [...setups].reverse().slice(0, 12);
-  const closed = setups.filter((s) => s.status === "take" || s.status === "stop");
+  const closed = history;
   const uncertain = setups.filter(s => s.status === "indeterminada").length;
   const wins = closed.filter((s) => s.status === "take").length;
   const open = [...setups].reverse().find((s) => s.status === "aguardando" || s.status === "confirmada" || s.status === "ativa");
@@ -104,10 +159,6 @@ function Live() {
           <h1 className="font-display text-2xl tracking-tight">
             <span className="text-primary">XAUUSD</span> Ao Vivo
           </h1>
-          <nav className="flex gap-3 text-sm">
-            <Link to="/" className="text-muted-foreground hover:text-foreground">Treino (simulado)</Link>
-            <span className="text-primary">Ao vivo</span>
-          </nav>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {TFS.map((t) => (
@@ -115,6 +166,14 @@ function Live() {
           ))}
           <span className="w-px h-6 bg-border mx-1" />
           <button className={`chip ${follow ? "chip-active" : ""}`} onClick={() => setFollow(true)}>⟶ Tempo real</button>
+          <button
+            className={`chip ${notify ? "chip-active" : ""}`}
+            onClick={async () => {
+              beep();
+              if (typeof Notification === "undefined") return;
+              setNotify((await Notification.requestPermission()) === "granted");
+            }}
+          >{notify ? "🔔 Alertas ativos" : "🔕 Ativar alertas"}</button>
         </div>
       </header>
 
@@ -133,7 +192,7 @@ function Live() {
             }}
           />
           <div className="absolute left-3 top-2 font-mono text-xs text-muted-foreground">
-            {DETECTOR_VERSION} · OANDA:XAUUSD · {TFS.find((t) => t.v === tf)?.l} {stale && "· mercado fechado"}
+            {DETECTOR_VERSION} · OANDA:XAUUSD · {TFS.find((t) => t.v === tf)?.l} {stale ? "· mercado fechado" : <>· vela fecha em <b className="text-foreground">{clock}</b></>}
           </div>
           {loading && <div className="absolute inset-0 grid place-items-center text-muted-foreground">Carregando velas reais…</div>}
           {error && !raw.length && (
@@ -183,10 +242,10 @@ function Live() {
 
           <div className="panel">
             <div className="flex justify-between text-xs uppercase tracking-widest text-muted-foreground">
-              <span>Histórico no gráfico</span>
+              <span>Histórico salvo</span>
               <span>{wins}/{closed.length} takes</span>
             </div>
-            <p className="text-xs text-muted-foreground mt-2">{DETECTOR_VERSION} · {raw.length.toLocaleString("pt-BR")} velas carregadas · lote {lotSize.toLocaleString("pt-BR")}{cooldownRemaining > 0 ? ` · Bloqueio: ${cooldownRemaining} velas restantes` : ""}</p>
+            <p className="text-xs text-muted-foreground mt-2">{DETECTOR_VERSION} · {raw.length.toLocaleString("pt-BR")} velas salvas · {closed.length} operações · lote {lotSize.toLocaleString("pt-BR")}{cooldownRemaining > 0 ? ` · Bloqueio: ${cooldownRemaining} velas restantes` : ""}</p>
             {uncertain > 0 && <p className="text-xs text-muted-foreground mt-1">{uncertain} entradas indeterminadas (fora da estatística)</p>}
             <ul className="mt-2 divide-y divide-border text-sm">
               {recent.map((s) => (
