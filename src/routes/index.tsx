@@ -5,7 +5,7 @@ import { CONTRACT_OUNCES_PER_LOT, DEFAULT_FVG_ENTRY_DEPTH, DEFAULT_LOT_SIZE, det
 import { TrainerChart } from "@/components/TrainerChart";
 import type { TvCandle } from "@/lib/tv.server";
 
-export const Route = createFileRoute("/ao-vivo")({
+export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
       { title: "XAUUSD Ao Vivo — CHoCH, BOS e FVG em tempo real" },
