@@ -6,7 +6,10 @@ export const DETECTOR_VERSION = "BOS/FVG v9";
 export const CONTRACT_OUNCES_PER_LOT = 100;
 export const RISK_REWARD_RATIO = 2;
 export const MAX_STOP_LOSS_USD = 134;
-export const DEFAULT_LOT_SIZE = 0.5;
+export const DEFAULT_LOT_SIZE = 0.25;
+/** FVG must be within these multiples of the mean of the last 10 bull + 10 bear gaps. */
+export const FVG_MIN_REL = 0.7;
+export const FVG_MAX_REL = 3;
 export const DEFAULT_FVG_ENTRY_DEPTH = 0.15;
 export const STRENGTH_LABELS: Record<SignalStrength, string> = {
   pendente: "Aguardando retorno",
@@ -314,6 +317,11 @@ export function detect(
   let id = 0;
   type Impulse = { at: number; pivot: number; level: number; dir: 1 | -1; type: "choch" | "bos"; atr: number; emitted: Set<number> };
   let impulses: Impulse[] = [];
+  const bullGaps: number[] = [];
+  const bearGaps: number[] = [];
+  const gapRef = () => bullGaps.length >= 10 && bearGaps.length >= 10
+    ? (bullGaps.slice(-10).reduce((a, b) => a + b, 0) + bearGaps.slice(-10).reduce((a, b) => a + b, 0)) / 20
+    : null;
 
   const cancel = (s: LiveSetup, i: number) => {
     s.status = "cancelada";
@@ -415,6 +423,13 @@ export function detect(
     impulses = impulses.filter(leg =>
       i - leg.at <= 3 && leg.dir === trend && (leg.type === "choch" || bosCount >= 1) && i > cooldownUntil,
     );
+    // Reference uses gaps closed before this candle so the candidate never biases itself.
+    const ref = gapRef();
+    if (i >= 2) {
+      const up = c[i]!.l - c[i - 2]!.h, dn = c[i - 2]!.l - c[i]!.h;
+      if (up > 0) bullGaps.push(up);
+      if (dn > 0) bearGaps.push(dn);
+    }
     for (const leg of impulses) {
       const { dir } = leg;
       const first = i === leg.at;
@@ -429,6 +444,12 @@ export function detect(
         if (size <= leg.atr * minFvgAtr) {
           diagnostics.fvgTooSmall++;
           reason = "gap menor ou igual a 0,15 ATR";
+        } else if (ref !== null && size < ref * FVG_MIN_REL) {
+          diagnostics.fvgTooSmall++;
+          reason = "FVG pequeno vs. média dos últimos 20";
+        } else if (ref !== null && size > ref * FVG_MAX_REL) {
+          diagnostics.fvgTooSmall++;
+          reason = "FVG gigante vs. média dos últimos 20";
         }
         if (reason !== "selected") {
           if (options.includeDiagnostics && diagnostics.samples.length < 40) diagnostics.samples.push({ breakAt: leg.at, fvgAt: j, dir, size, atr: leg.atr, reason });
