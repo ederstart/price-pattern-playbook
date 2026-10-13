@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getStored, syncCandles } from "@/lib/market.functions";
 import { TechGauges } from "@/components/TechGauges";
-import { CONTRACT_OUNCES_PER_LOT, DEFAULT_FVG_ENTRY_DEPTH, DEFAULT_LOT_SIZE, detect, DETECTOR_VERSION, RISK_REWARD_RATIO, STRENGTH_LABELS, type LiveSetup } from "@/lib/detect";
+import { CONTRACT_OUNCES_PER_LOT, DEFAULT_LOT_SIZE, detect, DETECTOR_VERSION, RISK_REWARD_RATIO, STRENGTH_LABELS, type LiveSetup } from "@/lib/detect";
 import { TrainerChart } from "@/components/TrainerChart";
 import type { TvCandle } from "@/lib/tv.server";
 
@@ -89,8 +89,6 @@ function Live() {
   }, []);
   useEffect(() => { localStorage.setItem("lotSize", String(lotSize)); }, [lotSize]);
   useEffect(() => { localStorage.setItem("tf", tf); seen.current = null; }, [tf]);
-  const tfRef = useRef(tf);
-  tfRef.current = tf;
 
   useEffect(() => {
     let alive = true;
