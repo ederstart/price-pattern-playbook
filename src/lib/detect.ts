@@ -2,7 +2,7 @@ import type { Ann, Candle } from "./generator";
 
 export type LiveStatus = "aguardando" | "confirmada" | "ativa" | "take" | "stop" | "expirada" | "cancelada" | "indeterminada";
 export type SignalStrength = "pendente" | "moderado" | "forte" | "sem-confirmacao";
-export const DETECTOR_VERSION = "BOS/FVG v9";
+export const DETECTOR_VERSION = "BOS/FVG v10";
 export const CONTRACT_OUNCES_PER_LOT = 100;
 export const RISK_REWARD_RATIO = 2;
 export const MAX_STOP_LOSS_USD = 134;
@@ -11,6 +11,8 @@ export const DEFAULT_LOT_SIZE = 0.25;
 export const FVG_MIN_REL = 0.7;
 export const FVG_MAX_REL = 3;
 export const DEFAULT_FVG_ENTRY_DEPTH = 0.15;
+/** Pullback that gets this close to the FVG (fraction of its height) counts as a touch. */
+export const TOUCH_TOLERANCE = 0.1;
 export const STRENGTH_LABELS: Record<SignalStrength, string> = {
   pendente: "Aguardando retorno",
   moderado: "Moderado / Fraco",
@@ -227,30 +229,29 @@ export function resolveSetup(
   }
   if (s.status === "aguardando") {
     if (i - s.fvgAt > MAX_WAIT) { finish("expirada", "Prazo de retorno encerrado"); return false; }
-    const touched = k.l <= s.entry && k.h >= s.entry;
-    if (touched) {
-      if (hitStop) {
-        finish("cancelada", "Reteste atingiu o stop antes da confirmação");
-        return true;
-      }
-      if (confirmsRejection(s, k)) {
-        s.status = "confirmada";
-        s.confirmedAt = i;
-        updateStrength(s, k, i);
-      } else {
-        const far = s.dir === 1 ? s.fvgBottom : s.fvgTop;
-        if ((k.c - far) * s.dir < 0) {
-          finish("cancelada", "Zona FVG perdida sem rejeição válida");
-          return true;
-        }
-      }
-      return false;
-    }
-    const far = s.dir === 1 ? s.fvgBottom : s.fvgTop;
-    if (hitStop || (k.c - far) * s.dir < 0) {
-      finish("cancelada", hitStop ? "Stop violado sem entrada negociável" : "Zona perdida sem toque na entrada");
+    const size = s.fvgTop - s.fvgBottom;
+    const near = s.dir === 1 ? s.fvgTop : s.fvgBottom;
+    // A touch of the rectangle, or a pullback within TOUCH_TOLERANCE of it, is a valid limit fill.
+    const reached = s.dir === 1 ? k.l <= near + size * TOUCH_TOLERANCE : k.h >= near - size * TOUCH_TOLERANCE;
+    if (!reached) return false;
+    const gapped = (near - k.o) * s.dir >= 0;
+    const entry = round(gapped ? k.o : s.dir === 1 ? Math.max(k.l, near) : Math.min(k.h, near));
+    if ((entry - s.stop) * s.dir <= 0 || Math.abs(entry - s.stop) * CONTRACT_OUNCES_PER_LOT * lotSize > MAX_STOP_LOSS_USD) {
+      finish("cancelada", "Entrada já além do stop ou risco acima do máximo");
       return true;
     }
+    s.entry = entry;
+    s.take = takePrice(entry, s.stop, s.dir);
+    s.status = "ativa";
+    s.filledAt = i;
+    s.maxDepth = Math.max(0, s.dir === 1 ? (s.fvgTop - k.l) / size : (k.h - s.fvgBottom) / size);
+    s.strength = s.maxDepth >= DEFAULT_FVG_ENTRY_DEPTH ? "forte" : "moderado";
+    s.retestComplete = true;
+    const stopNow = s.dir === 1 ? k.l <= s.stop : k.h >= s.stop;
+    const takeNow = s.dir === 1 ? k.h >= s.take : k.l <= s.take;
+    if (stopNow) finish("stop", "Stop atingido na vela de entrada");
+    else if (takeNow) finish("indeterminada", "Alvo tocado na vela de entrada; ordem intrabar incerta");
+    return false;
   } else if (s.status === "ativa") {
     if (hitStop && hitTake) finish("indeterminada", "Stop e alvo tocados na mesma vela");
     else if (hitStop) finish("stop", "Stop atingido");
@@ -364,10 +365,8 @@ export function detect(
       const opposite = trend === -dir;
       if (opposite) for (const s of setups) if ((s.status === "aguardando" || s.status === "confirmada") && s.dir !== dir) {
         // If price traded the entry during this candle, resolve the execution first.
-        if (s.status === "aguardando" && k.l <= s.entry && k.h >= s.entry) {
-          resolveSetup(s, k, i, lotSize);
-        }
-        else cancel(s, i);
+        if (s.status === "aguardando") resolveSetup(s, k, i, lotSize);
+        if (s.status === "aguardando" || s.status === "confirmada") cancel(s, i);
       }
       // First break seeds direction. Only subsequent continuation proves a trend.
       if (trend === 0) { trend = dir; bosCount = 0; trendStart = i; continue; }
