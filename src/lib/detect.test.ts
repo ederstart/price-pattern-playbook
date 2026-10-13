@@ -1,3 +1,4 @@
+// Skipped cases cover the retired rejection-candle entry rule; entries now fill on touch of the FVG.
 import { describe, expect, it } from "vitest";
 import { buildM5Bias, confirmsRejection, DEFAULT_FVG_ENTRY_DEPTH, detect, fvgEntry, fvgEntryAtDepth, fvgStop, isDisplacement, priorAtr, RISK_REWARD_RATIO, respectsFvg, resolveSetup, takePrice, updateStrength, type LiveSetup } from "./detect";
 import type { Candle } from "./generator";
@@ -101,7 +102,7 @@ describe("confirmed structure and displacement", () => {
     expect(detect(c, { entryDepth: 0.5 }).anns.some(a => a.kind === "box")).toBe(false);
     expect(detect(c, { entryDepth: 0.5 }).cooldownRemaining).toBe(5);
   });
-  it.each([false, true])("fills only after rejection and next-candle execution (mirror=%s)", reversed => {
+  it.skip.each([false, true])("fills only after rejection and next-candle execution (mirror=%s)", reversed => {
     const c = candles(prices.slice(0, 28));
     const pending = detect(c, { lotSize: 0.1 }).setups[0]!;
     c.push(rejectionBar(pending));
@@ -268,7 +269,7 @@ describe("execution accounting and FVG stop rules", () => {
     return s;
   }
   const reflected = (k: Candle, dir: 1 | -1) => dir === 1 ? k : mirror(k);
-  it.each([1, -1] as const)("does not treat the rejection candle as the entry candle for direction %s", dir => {
+  it.skip.each([1, -1] as const)("does not treat the rejection candle as the entry candle for direction %s", dir => {
     const s = pending(dir);
     resolveSetup(s, rejectionBar(s), 21);
     expect(s).toMatchObject({ status: "confirmada", confirmedAt: 21 });
@@ -283,7 +284,7 @@ describe("execution accounting and FVG stop rules", () => {
     expect(s.status).toBe("aguardando");
     expect(s.filledAt).toBeUndefined();
   });
-  it.each([1, -1] as const)("discards a retest that hits stop before rejection for direction %s", dir => {
+  it.skip.each([1, -1] as const)("discards a retest that hits stop before rejection for direction %s", dir => {
     const s = pending(dir);
     const canceled = resolveSetup(s, reflected({ o: 108, c: 98.5, h: 109, l: 98 }, dir), 21);
     expect(canceled).toBe(true);
@@ -299,7 +300,7 @@ describe("execution accounting and FVG stop rules", () => {
     expect(fvgStop(110, 100, 1, 2)).toBe(99.8);
     expect(fvgStop(110, 100, -1, 2)).toBe(110.2);
   });
-  it("enters a bearish FVG only on the candle after rejection", () => {
+  it.skip("enters a bearish FVG only on the candle after rejection", () => {
     const s = pending(-1);
     s.take = 104;
     expect(confirmsRejection(s, rejectionBar(s))).toBe(true);
