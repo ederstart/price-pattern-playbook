@@ -52,7 +52,8 @@ export const syncCandles = createServerFn({ method: "GET" })
       const from = anchor(tf);
       const backfill = data.since < from + 3600;
       const tfSec = tf === "1D" ? 86400 : Number(tf) * 60;
-      const need = backfill ? Math.min(8000, Math.ceil((Date.now() / 1000 - from) / tfSec) + 50) : 60;
+      // Fetch enough bars to cover any gap since the last stored candle.
+      const need = Math.min(8000, Math.ceil((Date.now() / 1000 - Math.max(data.since, from)) / tfSec) + 20);
       const fresh = await fetchCandles("OANDA:XAUUSD", tf, need).catch(() => [] as Row[]);
       for (let i = 0; i < fresh.length; i += 1000) {
         await db.from("candles").upsert(fresh.slice(i, i + 1000).map((k) => ({ tf, ...k })));

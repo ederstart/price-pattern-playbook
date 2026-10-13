@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getCandles } from "@/lib/market.functions";
+import { getStored, syncCandles } from "@/lib/market.functions";
+import { TechGauges } from "@/components/TechGauges";
 import { CONTRACT_OUNCES_PER_LOT, DEFAULT_FVG_ENTRY_DEPTH, DEFAULT_LOT_SIZE, detect, DETECTOR_VERSION, RISK_REWARD_RATIO, STRENGTH_LABELS, type LiveSetup } from "@/lib/detect";
 import { TrainerChart } from "@/components/TrainerChart";
 import type { TvCandle } from "@/lib/tv.server";
@@ -49,6 +50,8 @@ const STATUS: Record<LiveSetup["status"], { label: string; cls: string }> = {
 
 type Hist = { key: string; type: string; dir: number; status: string; fvg_time: number; entry: number; stop: number; take: number };
 
+const CACHE = new Map<string, { candles: TvCandle[]; history: Hist[] }>();
+
 function beep() {
   try {
     const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -91,19 +94,40 @@ function Live() {
 
   useEffect(() => {
     let alive = true;
-    setLoading(true);
-    setRaw([]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cached = CACHE.get(tf);
+    setRaw(cached?.candles ?? []);
+    setHistory(cached?.history ?? []);
+    setLoading(!cached);
     setFollow(true);
-    const load = async () => {
-      const r = await getCandles({ data: { tf } }).catch((e) => ({ ok: false as const, error: String(e), candles: [], history: [] }));
-      if (!alive || tfRef.current !== tf) return;
+    let data = cached?.candles ?? [];
+    const put = (candles: TvCandle[], from: number, hist: Hist[] | null) => {
+      const map = new Map(data.map((k) => [k.t, k]));
+      for (const k of candles) map.set(k.t, k);
+      data = [...map.values()].filter((k) => k.t >= from).sort((x, y) => x.t - y.t);
+      const entry = { candles: data, history: hist ?? CACHE.get(tf)?.history ?? [] };
+      CACHE.set(tf, entry);
+      if (!alive) return;
+      setRaw(data);
+      setHistory(entry.history);
       setLoading(false);
-      if (r.ok && r.candles.length) { setRaw(r.candles); setHistory(r.history as Hist[]); setError(null); }
-      else if (!r.ok) setError(r.error);
     };
-    load();
-    const t = setInterval(load, tf === "1" ? 4000 : 8000);
-    return () => { alive = false; clearInterval(t); };
+    const loop = async () => {
+      const r = await syncCandles({ data: { tf, since: data[data.length - 1]?.t ?? 0 } }).catch((e) => ({ ok: false as const, error: String(e), candles: [], history: null, from: 0 }));
+      if (!alive) return;
+      if (r.ok) { put(r.candles, r.from, r.history as Hist[] | null); setError(null); }
+      else setError(r.error);
+      timer = setTimeout(loop, tf === "1" ? 1500 : 4000);
+    };
+    (async () => {
+      if (!cached) {
+        const s = await getStored({ data: { tf } }).catch(() => null);
+        if (!alive) return;
+        if (s?.ok && s.candles.length) put(s.candles, s.from, s.history as Hist[]);
+      }
+      loop();
+    })();
+    return () => { alive = false; clearTimeout(timer); };
   }, [tf]);
 
   const candles = useMemo(() => raw.map(({ o, h, l, c }) => ({ o, h, l, c })), [raw]);
@@ -217,6 +241,7 @@ function Live() {
               className="w-24 rounded border border-border bg-background px-2 py-1 text-right font-mono"
             />
           </div>
+          <TechGauges candles={confirmedCandles} />
           <div className="panel">
             <div className="text-xs uppercase tracking-widest text-muted-foreground">Setup atual</div>
             {open ? (
@@ -225,7 +250,7 @@ function Live() {
                   {open.dir === 1 ? "Compra" : "Venda"} · {open.type === "choch" ? "CHoCH" : "BOS"} + FVG
                 </div>
                 <div className={`text-sm ${STATUS[open.status].cls}`}>{STATUS[open.status].label}</div>
-                <div className="text-xs mt-1 text-muted-foreground">{STRENGTH_LABELS[open.strength]} · entrada {Math.round(DEFAULT_FVG_ENTRY_DEPTH * 100)}% da borda próxima do FVG · execução após rejeição</div>
+                <div className="text-xs mt-1 text-muted-foreground">{STRENGTH_LABELS[open.strength]} · entrada ao tocar o FVG (ou chegar a 10% dele)</div>
                 <div className="grid grid-cols-3 gap-2 text-center mt-3">
                   <div className="stat stat-entry"><span>Entrada</span><b>{open.entry.toFixed(2)}</b></div>
                   <div className="stat stat-stop"><span>Perda no stop · −{formatUsd(Math.abs(open.entry - open.stop) * CONTRACT_OUNCES_PER_LOT * lotSize)}</span><b>{open.stop.toFixed(2)}</b></div>
